@@ -1,0 +1,978 @@
+// lib/features/messaging/messaging_service.dart
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:mesh_comm/core/ble/ble_service.dart';
+import 'package:mesh_comm/core/crypto/crypto_service.dart';
+import 'package:mesh_comm/core/diagnostics/diagnostic_config.dart';
+import 'package:mesh_comm/core/packet/mesh_packet.dart';
+import 'package:mesh_comm/core/packet/msg_type.dart';
+import 'package:mesh_comm/core/storage/database_service.dart';
+import 'package:mesh_comm/features/contacts/contact_service.dart';
+import 'package:mesh_comm/features/identity/identity_service.dart';
+import 'package:mesh_comm/features/settings/app_settings_service.dart';
+
+import 'message_policy.dart';
+
+// ── ReceivedMessage ────────────────────────────────────────────────────────────
+
+/// 수신된 1:1 텍스트 메시지 (복호화 완료 상태).
+class ReceivedMessage {
+  /// 패킷의 고유 ID (16 bytes).
+  final Uint8List msgId;
+
+  /// 발신자 node_id (16 bytes, SHA-256(publicKey) 앞 16 bytes).
+  final Uint8List senderNodeId;
+
+  /// 복호화된 텍스트 본문.
+  final String text;
+
+  /// 발신 Unix timestamp (밀리초).
+  final int timestamp;
+
+  /// 발신자가 신뢰 연락처(TOFU 확인 완료)인지 여부 (R-08).
+  final bool isTrusted;
+
+  /// 자신이 보낸 메시지 여부 (true = 발신, false = 수신).
+  final bool isOutgoing;
+
+  /// 채팅 화면에 표시된 뒤 이 시간 후 삭제된다. null이면 자동 삭제 없음.
+  final int? readTtlMs;
+
+  const ReceivedMessage({
+    required this.msgId,
+    required this.senderNodeId,
+    required this.text,
+    required this.timestamp,
+    required this.isTrusted,
+    this.isOutgoing = false,
+    this.readTtlMs,
+  });
+
+  @override
+  String toString() {
+    final senderHex = senderNodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return 'ReceivedMessage(sender=$senderHex, ts=$timestamp, '
+        'trusted=$isTrusted, outgoing=$isOutgoing, text="$text")';
+  }
+}
+
+// ── MessagingService ───────────────────────────────────────────────────────────
+
+/// 1:1 텍스트 메시지 송수신 + 메시 릴레이 서비스 (싱글톤).
+///
+/// ## 책임
+/// - 수신 패킷 처리 파이프라인 (중복 제거 → 서명 검증 → 유형별 처리 → 릴레이)
+/// - TEXT 패킷 암호화 전송
+/// - KEY_ANNOUNCE 주기 브로드캐스트 (R-10)
+/// - seen_messages 캐시 주기 정리 (R-09)
+/// - 수신 메시지 Stream 제공
+///
+/// ## 초기화 순서
+/// ```dart
+/// await DatabaseService().init();
+/// await IdentityService().init();
+/// await BleService().init(myNodeId: ..., onPacketReceived: ...);
+/// await MessagingService().init();
+/// ```
+class _DecodedTextPayload {
+  final String text;
+  final int? ttlMs;
+
+  const _DecodedTextPayload({required this.text, this.ttlMs});
+}
+
+class MessagingService {
+  // ── 싱글톤 ──────────────────────────────────────────────────────────────────
+  static final MessagingService _instance = MessagingService._internal();
+  factory MessagingService() => _instance;
+  MessagingService._internal();
+
+  // ── 의존성 ──────────────────────────────────────────────────────────────────
+  final _ble = BleService();
+  final _crypto = CryptoService();
+  final _db = DatabaseService();
+  final _identity = IdentityService();
+  final _contacts = ContactService();
+
+  // ── 내부 상태 ────────────────────────────────────────────────────────────────
+  bool _initialized = false;
+
+  // KEY_ANNOUNCE 재전송 타이머 (R-10: 5분 주기)
+  Timer? _keyAnnounceTimer;
+  Timer? _connectionAnnounceTimer;
+  final Set<String> _keyAnnounceRespondedNodeIds = {};
+  StreamSubscription<List<String>>? _connectionSubscription;
+  Set<String> _knownBleDeviceIds = {};
+
+  // seen_messages 정리 타이머 (R-09: 30분 주기)
+  Timer? _cleanSeenTimer;
+
+  // 컴파일 타임 진단 메시지. 일반 빌드에서는 빈 문자열이므로 동작하지 않는다.
+  static const _diagnosticMessage = String.fromEnvironment(
+    'MESHCOMM_DIAGNOSTIC_MESSAGE',
+  );
+  Timer? _diagnosticMessageTimer;
+  bool _diagnosticMessageSent = false;
+
+  // 수신 메시지 Stream 컨트롤러
+  final StreamController<ReceivedMessage> _messageStreamController =
+      StreamController<ReceivedMessage>.broadcast();
+
+  // ── 공개 Stream ─────────────────────────────────────────────────────────────
+
+  /// 새 수신 TEXT 메시지가 도착할 때마다 emit된다 (복호화 완료 상태).
+  Stream<ReceivedMessage> get messageStream => _messageStreamController.stream;
+
+  // ── 초기화 ───────────────────────────────────────────────────────────────────
+
+  /// MessagingService를 초기화한다.
+  ///
+  /// - [BleService.init]의 onPacketReceived 콜백을 [_handleIncomingPacket]으로 설정한다.
+  /// - KEY_ANNOUNCE 즉시 브로드캐스트 후 5분 주기 타이머 시작 (R-10).
+  /// - seen_messages 정리 타이머 시작 (R-09, 30분 주기).
+  ///
+  /// 멱등(idempotent): 이미 초기화된 경우 즉시 반환.
+  Future<void> init() async {
+    if (_initialized) return;
+
+    // BleService onPacketReceived 콜백 재등록
+    // BleService.init()에서 이미 myNodeId를 설정했으므로,
+    // 콜백만 교체하기 위해 내부 필드를 직접 접근하지 않고
+    // init()을 다시 호출한다 (멱등 보장 — BleService.init이 이미 초기화된 경우 return).
+    // 대신 BleService는 _onPacketReceived 필드를 노출하지 않으므로,
+    // 패킷 수신은 BleService.init()의 onPacketReceived 매개변수로 최초에 등록해야 한다.
+    //
+    // MessagingService는 앱 시작 시 BleService.init()의 onPacketReceived에
+    // _handleIncomingPacket을 전달하는 방식으로 연결된다.
+    // 호출 순서 예시:
+    //   await BleService().init(
+    //     myNodeId: identity.myNodeId,
+    //     onPacketReceived: MessagingService()._handleIncomingPacket,
+    //   );
+    //   await MessagingService().init();
+    //
+    // 단, 편의를 위해 init() 내부에서 BleService.init()을 재호출할 수도 있다.
+    // BleService.init()은 이미 초기화된 경우 즉시 반환(멱등)하지만,
+    // _onPacketReceived는 다시 설정해야 하는 문제가 있다.
+    // 따라서 이 서비스의 init()은 BleService가 이미 초기화된 상태에서 호출됨을 전제한다.
+    // 콜백 주입은 앱 부트스트랩 레이어의 책임이다.
+
+    _initialized = true;
+
+    _connectionSubscription = _ble.connectedDevicesStream.listen(
+      _handleConnectedDevices,
+    );
+    _ble.startHeartbeat(_createPingPacket);
+
+    // KEY_ANNOUNCE 즉시 브로드캐스트 (R-10)
+    await broadcastKeyAnnounce();
+
+    // KEY_ANNOUNCE 5분 주기 재전송 (R-10)
+    _keyAnnounceTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) async => broadcastKeyAnnounce(),
+    );
+
+    await _db.deleteExpiredMessages();
+
+    // seen_messages 30분 주기 정리 (R-09)
+    _cleanSeenTimer = Timer.periodic(const Duration(minutes: 30), (_) async {
+      try {
+        await _db.deleteExpiredMessages();
+        await _db.cleanOldSeenMessages();
+        _log('seen_messages 정리 완료');
+      } catch (e) {
+        _log('cleanOldSeenMessages 오류: $e');
+      }
+    });
+
+    _log('MessagingService 초기화 완료');
+  }
+
+  void _handleConnectedDevices(List<String> deviceIds) {
+    final currentDeviceIds = deviceIds.toSet();
+    final hasNewDevice = currentDeviceIds
+        .difference(_knownBleDeviceIds)
+        .isNotEmpty;
+    _knownBleDeviceIds = currentDeviceIds;
+
+    if (!hasNewDevice) return;
+
+    // Android peripheral 연결 콜백은 central의 CCCD 구독 완료보다 먼저 올 수 있다.
+    // notify 경로가 준비된 뒤 키를 다시 알려 새 이웃을 바로 연락처로 등록한다.
+    _connectionAnnounceTimer?.cancel();
+    _connectionAnnounceTimer = Timer(const Duration(seconds: 3), () async {
+      await broadcastKeyAnnounce();
+    });
+  }
+
+  // ── 1:1 텍스트 메시지 전송 ───────────────────────────────────────────────────
+
+  /// 상대방에게 암호화된 1:1 텍스트 메시지를 전송한다.
+  ///
+  /// ## 처리 흐름
+  /// 1. sharedSecret으로 payload AES-GCM 암호화
+  /// 2. [MeshPacket.create]로 패킷 생성
+  /// 3. Ed25519 서명 (R-07)
+  /// 4. DB에 발신 메시지 저장 (복호화된 text 보존)
+  /// 5. [BleService.broadcastPacket]으로 전송
+  ///
+  /// 반환값: 전송 성공 여부.
+  Future<bool> sendTextMessage({
+    required Uint8List targetNodeId,
+    required String text,
+    MessageSendMode mode = MessageSendMode.normal,
+  }) async {
+    try {
+      final settings = AppSettingsService().current;
+      if (!settings.userLevel.canSendMessages) {
+        _log('TEXT send blocked: server level only relays messages.');
+        return false;
+      }
+      final trimmedText = text.trim();
+      if (trimmedText.isEmpty || trimmedText.length > mode.maxLength) {
+        return false;
+      }
+      if (mode.isNotice) {
+        return _sendNoticeMessage(text: trimmedText, mode: mode);
+      }
+
+      // 1. 최종 수신자와만 공유하는 X25519 비밀키로 payload 암호화.
+      // 릴레이 노드는 패킷을 전달하지만 본문을 복호화할 수 없다.
+      final targetEncryptionPublicKey = await _contacts.getEncryptionPublicKey(
+        targetNodeId,
+      );
+      if (targetEncryptionPublicKey == null) {
+        _log('TEXT 전송 실패: 상대방 메시지 암호화 키가 없습니다.');
+        return false;
+      }
+      final sharedSecret = await _crypto.computeSharedSecret(
+        _identity.myEncryptionPrivateKeySeed,
+        targetEncryptionPublicKey,
+      );
+
+      final plaintext = _encodeTextPayload(trimmedText, mode);
+      final encryptedPayload = await _crypto.encrypt(plaintext, sharedSecret);
+
+      // 2. 패킷 생성
+      final packet = MeshPacket.create(
+        senderId: _identity.myNodeId,
+        targetId: targetNodeId,
+        msgType: MsgType.text,
+        payload: encryptedPayload,
+      );
+
+      // 3. Ed25519 서명 (R-07)
+      final signableBytes = packet.toSignableBytes();
+      final signature = await _crypto.sign(
+        signableBytes,
+        _identity.myPrivateKeySeed,
+      );
+      packet.signature = signature;
+
+      // 4. 브로드캐스트 전송
+      final recipientCount = await _broadcastPacketWithRetry(packet);
+      if (recipientCount == 0) {
+        _log('TEXT 전송 실패: 연결된 BLE 이웃이 없습니다.');
+        return false;
+      }
+
+      // 5. DB에 발신 메시지 저장 (복호화된 UTF-8 bytes 보존)
+      await _db.saveMessage(
+        msgId: packet.msgId,
+        senderId: _identity.myNodeId,
+        targetId: targetNodeId,
+        msgType: MsgType.text.value,
+        timestamp: packet.timestamp,
+        payload: plaintext, // 평문 저장 (자신이 보낸 메시지는 복호화 불필요)
+        isOutgoing: true,
+        expiresAt: _expiresAtForLocalDisplay(mode),
+      );
+
+      _log(
+        'TEXT 전송: ${_hexShort(targetNodeId)} '
+        'mode=$mode "${_truncate(trimmedText, 30)}"',
+      );
+      return true;
+    } catch (e) {
+      _log('sendTextMessage 오류: $e');
+      return false;
+    }
+  }
+
+  // ── KEY_ANNOUNCE 브로드캐스트 ────────────────────────────────────────────────
+
+  /// 자신의 공개키를 담은 KEY_ANNOUNCE 패킷을 브로드캐스트한다 (R-10).
+  ///
+  /// [IdentityService.createKeyAnnouncePacket]으로 생성 후 서명 포함.
+  Future<bool> _sendNoticeMessage({
+    required String text,
+    required MessageSendMode mode,
+  }) async {
+    final settingsService = AppSettingsService();
+    final settings = settingsService.current;
+    final cooldown = settings.userLevel.noticeCooldown(mode);
+    if (cooldown == null) {
+      _log('NOTICE send blocked: server level only relays messages.');
+      return false;
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final lastUsedMs = mode == MessageSendMode.shortNotice
+        ? settings.lastShortNoticeAt
+        : settings.lastLongNoticeAt;
+
+    if (lastUsedMs > 0 &&
+        nowMs - lastUsedMs < cooldown.inMilliseconds) {
+      _log('NOTICE 전송 실패: 하루 1회 제한 mode=$mode');
+      return false;
+    }
+
+    final sent = mode == MessageSendMode.shortNotice
+        ? await _sendShortNoticeToContacts(text)
+        : await _sendLongNoticeBroadcast(text, mode);
+
+    if (!sent) return false;
+
+    final nextSettings = mode == MessageSendMode.shortNotice
+        ? settings.copyWith(lastShortNoticeAt: nowMs)
+        : settings.copyWith(lastLongNoticeAt: nowMs);
+    await settingsService.save(nextSettings, notify: false);
+
+    _log('NOTICE 전송: mode=$mode "$text"');
+    return true;
+  }
+
+  Future<bool> _sendEncryptedTextPacket({
+    required Uint8List targetNodeId,
+    required String text,
+    required MessageSendMode mode,
+    int ttl = MeshPacket.defaultTtl,
+  }) async {
+    final targetEncryptionPublicKey = await _contacts.getEncryptionPublicKey(
+      targetNodeId,
+    );
+    if (targetEncryptionPublicKey == null) return false;
+
+    final sharedSecret = await _crypto.computeSharedSecret(
+      _identity.myEncryptionPrivateKeySeed,
+      targetEncryptionPublicKey,
+    );
+    final plaintext = _encodeTextPayload(text, mode);
+    final encryptedPayload = await _crypto.encrypt(plaintext, sharedSecret);
+    final packet = MeshPacket.create(
+      senderId: _identity.myNodeId,
+      targetId: targetNodeId,
+      msgType: MsgType.text,
+      payload: encryptedPayload,
+      ttl: ttl,
+    );
+    packet.signature = await _crypto.sign(
+      packet.toSignableBytes(),
+      _identity.myPrivateKeySeed,
+    );
+
+    final recipientCount = await _broadcastPacketWithRetry(packet);
+    if (recipientCount == 0) return false;
+
+    await _db.saveMessage(
+      msgId: packet.msgId,
+      senderId: _identity.myNodeId,
+      targetId: targetNodeId,
+      msgType: MsgType.text.value,
+      timestamp: packet.timestamp,
+      payload: plaintext,
+      isOutgoing: true,
+      expiresAt: _expiresAtForLocalDisplay(mode),
+    );
+    return true;
+  }
+
+  Future<bool> _sendShortNoticeToContacts(String text) async {
+    final contacts = await _contacts.getAllContacts();
+    var sentAny = false;
+
+    for (final contact in contacts) {
+      if (contact.encryptionPublicKey == null) continue;
+      final sent = await _sendEncryptedTextPacket(
+        targetNodeId: contact.nodeId,
+        text: text,
+        mode: MessageSendMode.shortNotice,
+        ttl: MessagePolicy.shortNoticeTtl,
+      );
+      sentAny = sentAny || sent;
+    }
+
+    return sentAny;
+  }
+
+  Future<bool> _sendLongNoticeBroadcast(String text, MessageSendMode mode) async {
+
+    final packet = MeshPacket.create(
+      senderId: _identity.myNodeId,
+      targetId: MeshPacket.broadcast,
+      msgType: MsgType.text,
+      payload: _encodeTextPayload(text, mode),
+      ttl: MessagePolicy.longNoticeTtl,
+    );
+    packet.signature = await _crypto.sign(
+      packet.toSignableBytes(),
+      _identity.myPrivateKeySeed,
+    );
+
+    final recipientCount = await _broadcastPacketWithRetry(packet);
+    if (recipientCount == 0) {
+      _log('NOTICE 전송 실패: 연결된 BLE 이웃이 없습니다.');
+      return false;
+    }
+
+    await _db.saveMessage(
+      msgId: packet.msgId,
+      senderId: _identity.myNodeId,
+      targetId: MeshPacket.broadcast,
+      msgType: MsgType.text.value,
+      timestamp: packet.timestamp,
+      payload: packet.payload,
+      isOutgoing: true,
+    );
+    return true;
+  }
+
+  Future<int> _broadcastPacketWithRetry(MeshPacket packet) async {
+    var recipientCount = 0;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      recipientCount = await _ble.broadcastPacket(packet);
+      if (recipientCount > 0) return recipientCount;
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    }
+    return recipientCount;
+  }
+
+  Future<void> broadcastKeyAnnounce() async {
+    try {
+      final packet = await _identity.createKeyAnnouncePacket();
+      final recipientCount = await _ble.broadcastPacket(packet);
+      _log('KEY_ANNOUNCE 브로드캐스트 완료: $recipientCount개 이웃');
+    } catch (e) {
+      _log('broadcastKeyAnnounce 오류: $e');
+    }
+  }
+
+  // ── 수신 패킷 처리 ───────────────────────────────────────────────────────────
+
+  /// BleService에서 패킷을 수신했을 때 호출되는 콜백.
+  ///
+  /// ## 처리 파이프라인
+  /// 1. msg_id 중복 확인 → 이미 봤으면 drop (R-09)
+  /// 2. markMessageSeen() — seen_messages에 기록
+  /// 3. 서명 검증 (발신자 공개키 필요)
+  ///    - TEXT/PING/PONG: ContactService.getPublicKey() 로 조회
+  ///    - KEY_ANNOUNCE: 패킷 payload에서 publicKey 추출하여 검증
+  ///    - 공개키를 알 수 없으면 서명 검증 불가 → drop
+  ///    - 검증 실패 → drop (R-07)
+  /// 4. msg_type 별 처리
+  /// 5. TTL 체크 후 릴레이 (R-09 RPF)
+
+  /// BleService.onPacketReceived 콜백에서 호출하는 public 진입점.
+  Future<void> handleIncomingPacket(MeshPacket packet, String fromDeviceId) =>
+      _handleIncomingPacket(packet, fromDeviceId);
+
+  Future<void> _handleIncomingPacket(
+    MeshPacket packet,
+    String fromDeviceId,
+  ) async {
+    if (_bytesEqual(packet.senderId, _identity.myNodeId)) {
+      _log('DROP(자체 패킷 echo): ${_hexShort(packet.msgId)}');
+      return;
+    }
+
+    // ── Step 1: msg_id 중복 확인 ─────────────────────────────────────────────
+    final alreadySeen = await _db.isMessageSeen(packet.msgId);
+    if (alreadySeen) {
+      _log('DROP(중복): ${_hexShort(packet.msgId)}');
+      return;
+    }
+
+    // ── Step 2: 서명 검증 (markMessageSeen은 검증 후에 수행) ─────────────────
+    // C-2 수정: DoS 방지 — 위조 패킷으로 정상 패킷을 차단하는 것을 막기 위해
+    // 서명 검증 성공 후에만 seen 캐시에 등록한다.
+    final senderPublicKey = await _resolveSenderPublicKey(packet, fromDeviceId);
+    if (senderPublicKey == null) {
+      _log('DROP(공개키 없음): ${_hexShort(packet.msgId)} type=${packet.msgType}');
+      return;
+    }
+
+    final signatureValid = await _identity.verifyPacketSignature(
+      packet,
+      senderPublicKey,
+    );
+    if (!signatureValid) {
+      _log(
+        'DROP(서명 불일치): ${_hexShort(packet.msgId)} sender=${_hexShort(packet.senderId)}',
+      );
+      return;
+    }
+
+    // ── Step 3: markMessageSeen (서명 검증 성공 후) ───────────────────────────
+    await _db.markMessageSeen(packet.msgId);
+
+    // ── Step 4: msg_type 별 처리 ──────────────────────────────────────────────
+    switch (packet.msgType) {
+      case MsgType.text:
+        await _handleTextPacket(packet);
+      case MsgType.keyAnnounce:
+        await _handleKeyAnnouncePacket(packet, senderPublicKey);
+      case MsgType.ping:
+        await _handlePingPacket(packet, fromDeviceId);
+      case MsgType.pong:
+        _ble.markHeartbeatResponse(fromDeviceId);
+        _log('PONG 수신: sender=${_hexShort(packet.senderId)}');
+      case MsgType.adminNotice:
+        // Phase 3 구현 예정
+        _log('ADMIN_NOTICE 수신 (Phase 3 미구현): ${_hexShort(packet.msgId)}');
+      case MsgType.ack:
+        // Phase 2 구현 예정
+        _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
+    }
+
+    // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
+    if (packet.ttl <= 0) {
+      _log('DROP(TTL=0): ${_hexShort(packet.msgId)}');
+      return;
+    }
+
+    // C-1 수정: ttl/hopCount는 toSignableBytes()에서 제외됨 → 재서명 불필요
+    // 원래 발신자 서명을 그대로 유지한 채 ttl/hopCount만 변경하여 릴레이
+    packet.ttl -= 1;
+    packet.hopCount += 1;
+
+    final relayed = await _ble.broadcastPacket(
+      packet,
+      excludeDeviceId: fromDeviceId,
+    );
+    if (relayed > 0) {
+      _log(
+        'RELAY: type=${packet.msgType} sender=${_hexShort(packet.senderId)} '
+        'target=${_hexShort(packet.targetId)} hop=${packet.hopCount} '
+        'ttl=${packet.ttl} neighbors=$relayed',
+      );
+    }
+  }
+
+  // ── TEXT 패킷 처리 ────────────────────────────────────────────────────────────
+
+  /// TEXT 패킷을 복호화하여 Stream에 emit하고 DB에 저장한다.
+  Future<void> _handleTextPacket(MeshPacket packet) async {
+    // 자신에게 온 메시지인지 확인 (targetId = myNodeId 또는 broadcast)
+    final myNodeId = _identity.myNodeId;
+    final isForMe =
+        packet.isBroadcast || _bytesEqual(packet.targetId, myNodeId);
+    if (!isForMe) {
+      // 릴레이 전용 (복호화 불필요)
+      return;
+    }
+
+    final Uint8List plaintext;
+    if (packet.isBroadcast) {
+      plaintext = packet.payload;
+    } else {
+      final senderEncryptionPublicKey = await _contacts.getEncryptionPublicKey(
+        packet.senderId,
+      );
+      if (senderEncryptionPublicKey == null) {
+        _log('TEXT 복호화 실패: 발신자 메시지 암호화 키가 없습니다.');
+        return;
+      }
+      final sharedSecret = await _crypto.computeSharedSecret(
+        _identity.myEncryptionPrivateKeySeed,
+        senderEncryptionPublicKey,
+      );
+
+      final decrypted = await _crypto.decrypt(packet.payload, sharedSecret);
+      if (decrypted == null) {
+        _log('TEXT 복호화 실패: ${_hexShort(packet.msgId)}');
+        return;
+      }
+      plaintext = decrypted;
+    }
+
+    final _DecodedTextPayload decodedPayload;
+    try {
+      decodedPayload = _decodeTextPayload(plaintext);
+    } catch (e) {
+      _log('TEXT UTF-8 디코딩 실패: ${_hexShort(packet.msgId)} — $e');
+      return;
+    }
+    // DB에 수신 메시지 저장 (복호화된 본문 보존)
+    await _db.saveMessage(
+      msgId: packet.msgId,
+      senderId: packet.senderId,
+      targetId: packet.targetId,
+      msgType: MsgType.text.value,
+      timestamp: packet.timestamp,
+      payload: plaintext,
+      isOutgoing: false,
+    );
+
+    // 신뢰 상태 확인 (R-08)
+    final contact = await _contacts.getContact(packet.senderId);
+    final isTrusted = contact?.isTrusted ?? false;
+
+    final received = ReceivedMessage(
+      msgId: packet.msgId,
+      senderNodeId: Uint8List.fromList(packet.senderId),
+      text: decodedPayload.text,
+      timestamp: packet.timestamp,
+      isTrusted: isTrusted,
+      readTtlMs: decodedPayload.ttlMs,
+    );
+
+    if (!_messageStreamController.isClosed) {
+      _messageStreamController.add(received);
+    }
+
+    _log(
+      'TEXT 수신: sender=${_hexShort(packet.senderId)} '
+      'trusted=$isTrusted hop=${packet.hopCount} '
+      '"${_truncate(decodedPayload.text, 30)}"',
+    );
+  }
+
+  // ── KEY_ANNOUNCE 패킷 처리 ────────────────────────────────────────────────────
+
+  /// KEY_ANNOUNCE 패킷을 처리하여 연락처를 추가/업데이트한다.
+  Future<void> _handleKeyAnnouncePacket(
+    MeshPacket packet,
+    Uint8List senderPublicKey,
+  ) async {
+    // 서명은 Step 3에서 이미 검증 완료
+    // parseKeyAnnouncePacket은 서명이 이미 검증되었다고 가정한다 (IdentityService 주석 참고)
+    final contactInfo = _identity.parseKeyAnnouncePacket(packet);
+    if (contactInfo == null) {
+      _log('KEY_ANNOUNCE 파싱 실패: ${_hexShort(packet.msgId)}');
+      return;
+    }
+
+    // 공개키 변경 감지 (R-08 TOFU)
+    final changeResult = await _contacts.checkPublicKeyChange(
+      contactInfo.nodeId,
+      contactInfo.publicKey,
+      contactInfo.encryptionPublicKey,
+    );
+
+    if (changeResult == TrustChangeResult.changed) {
+      _log(
+        '경고: ${_hexShort(contactInfo.nodeId)} 공개키 변경 감지 '
+        '— 신뢰 상태 리셋, 재확인 필요 (R-08)',
+      );
+      // TODO: UI 레이어에서 경고 표시 이벤트 발행 (Phase 2)
+    }
+
+    await _contacts.addOrUpdateContact(
+      contactInfo.nodeId,
+      contactInfo.publicKey,
+      encryptionPublicKey: contactInfo.encryptionPublicKey,
+      displayName: contactInfo.displayName,
+      avatarKey: contactInfo.avatarKey,
+      userLevel: contactInfo.userLevel,
+      deviceType: contactInfo.deviceType,
+    );
+
+    _log(
+      'KEY_ANNOUNCE 처리: sender=${_hexShort(packet.senderId)} '
+      'result=$changeResult',
+    );
+
+    if (_keyAnnounceRespondedNodeIds.add(_hex(contactInfo.nodeId))) {
+      // 새 이웃이 자신의 키를 알려오면 내 키도 응답하여 양쪽 ECDH 준비를 끝낸다.
+      await broadcastKeyAnnounce();
+    }
+    _scheduleDiagnosticMessage(contactInfo.nodeId);
+  }
+
+  void _scheduleDiagnosticMessage(Uint8List nodeId) {
+    if (_diagnosticMessage.isEmpty || _diagnosticMessageSent) return;
+    final targetNodeId = DiagnosticConfig.targetNodeId.toLowerCase();
+    if (targetNodeId.isNotEmpty && _hex(nodeId) != targetNodeId) return;
+
+    _diagnosticMessageSent = true;
+    _diagnosticMessageTimer = Timer(const Duration(seconds: 1), () async {
+      final sent = await sendTextMessage(
+        targetNodeId: nodeId,
+        text: _diagnosticMessage,
+      );
+      _log('진단 TEXT 자동 전송: ${sent ? '성공' : '실패'}');
+    });
+  }
+
+  // ── PING 패킷 처리 ────────────────────────────────────────────────────────────
+
+  /// PING 패킷에 PONG으로 응답한다.
+  Future<void> _handlePingPacket(MeshPacket packet, String fromDeviceId) async {
+    _log('PING 수신: sender=${_hexShort(packet.senderId)}');
+
+    try {
+      // PONG 패킷 생성 — target을 발신자로 설정
+      final pong = MeshPacket.create(
+        senderId: _identity.myNodeId,
+        targetId: Uint8List.fromList(packet.senderId),
+        msgType: MsgType.pong,
+        payload: Uint8List(0), // PONG은 payload 없음
+        ttl: 0, // 직접 연결된 이웃에게만 응답
+      );
+
+      // Ed25519 서명 (R-07)
+      final signableBytes = pong.toSignableBytes();
+      final signature = await _crypto.sign(
+        signableBytes,
+        _identity.myPrivateKeySeed,
+      );
+      pong.signature = signature;
+
+      // fromDeviceId로 직접 전송
+      final sent = await _ble.sendPacket(pong, fromDeviceId);
+      if (!sent) {
+        // 직접 연결이 없으면 브로드캐스트로 fallback
+        await _ble.broadcastPacket(pong);
+      }
+
+      _log('PONG 전송: target=${_hexShort(packet.senderId)}');
+    } catch (e) {
+      _log('PONG 전송 오류: $e');
+    }
+  }
+
+  /// 직접 연결된 이웃의 생존 여부를 확인하는 서명된 PING 패킷을 만든다.
+  Future<MeshPacket> _createPingPacket() async {
+    final ping = MeshPacket.create(
+      senderId: _identity.myNodeId,
+      targetId: MeshPacket.broadcast,
+      msgType: MsgType.ping,
+      payload: Uint8List(0),
+      ttl: 0,
+    );
+    ping.signature = await _crypto.sign(
+      ping.toSignableBytes(),
+      _identity.myPrivateKeySeed,
+    );
+    return ping;
+  }
+
+  // ── 메시지 히스토리 조회 ─────────────────────────────────────────────────────
+
+  /// 특정 연락처와의 메시지 목록을 반환한다 (timestamp 오름차순).
+  ///
+  /// DB에서 복호화된 payload를 읽어 [ReceivedMessage] 목록으로 변환한다.
+  Future<List<ReceivedMessage>> getMessageHistory(
+    Uint8List contactNodeId, {
+    int limit = 50,
+  }) async {
+    final rows = await _db.getMessages(contactNodeId, limit: limit);
+    final contact = await _contacts.getContact(contactNodeId);
+    final isTrusted = contact?.isTrusted ?? false;
+
+    final result = <ReceivedMessage>[];
+    for (final row in rows) {
+      final payload = row['payload'] as Uint8List?;
+      if (payload == null) continue;
+
+      _DecodedTextPayload decodedPayload;
+      try {
+        decodedPayload = _decodeTextPayload(payload);
+      } catch (_) {
+        continue; // 디코딩 불가 항목 건너뜀
+      }
+
+      final isOutgoing = (row['is_outgoing'] as int? ?? 0) == 1;
+      if (decodedPayload.ttlMs != null && row['expires_at'] == null) {
+        await _db.setMessageExpiresAtIfNull(
+          row['msg_id'] as Uint8List,
+          DateTime.now().millisecondsSinceEpoch + decodedPayload.ttlMs!,
+        );
+      }
+      result.add(
+        ReceivedMessage(
+          msgId: row['msg_id'] as Uint8List,
+          senderNodeId: row['sender_id'] as Uint8List,
+          text: decodedPayload.text,
+          timestamp: row['timestamp'] as int,
+          isTrusted: isTrusted,
+          isOutgoing: isOutgoing,
+          readTtlMs: decodedPayload.ttlMs,
+        ),
+      );
+    }
+
+    return result;
+  }
+
+  // ── 리소스 해제 ─────────────────────────────────────────────────────────────
+
+  /// 타이머와 Stream 컨트롤러를 해제한다. 앱 종료 시 호출.
+  Future<void> markMessageDisplayed(ReceivedMessage message) async {
+    final ttlMs = message.readTtlMs;
+    if (ttlMs == null) return;
+    await _db.setMessageExpiresAtIfNull(
+      message.msgId,
+      DateTime.now().millisecondsSinceEpoch + ttlMs,
+    );
+  }
+
+  Future<void> dispose() async {
+    _keyAnnounceTimer?.cancel();
+    _keyAnnounceTimer = null;
+    _connectionAnnounceTimer?.cancel();
+    _connectionAnnounceTimer = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+    _cleanSeenTimer?.cancel();
+    _cleanSeenTimer = null;
+    _diagnosticMessageTimer?.cancel();
+    _diagnosticMessageTimer = null;
+    _ble.stopHeartbeat();
+
+    if (!_messageStreamController.isClosed) {
+      await _messageStreamController.close();
+    }
+
+    _initialized = false;
+    _log('MessagingService 해제 완료');
+  }
+
+  // ── 내부 유틸리티 ────────────────────────────────────────────────────────────
+
+  /// 발신자의 공개키를 결정한다.
+  ///
+  /// - TEXT/PING/PONG/ADMIN_NOTICE/ACK: ContactService.getPublicKey() 조회
+  /// - KEY_ANNOUNCE: payload에서 publicKey를 추출하여 반환
+  ///   (아직 연락처에 없는 기기의 첫 공개 키 공지를 처리하기 위해)
+  Uint8List _encodeTextPayload(String text, MessageSendMode mode) {
+    if (mode == MessageSendMode.normal) {
+      return Uint8List.fromList(utf8.encode(text));
+    }
+
+    final kind = switch (mode) {
+      MessageSendMode.normal => 'normal',
+      MessageSendMode.timed => 'time',
+      MessageSendMode.shortNotice => 'notice_s',
+      MessageSendMode.longNotice => 'notice_l',
+    };
+
+    final payload = <String, dynamic>{
+      'meshTextVersion': 1,
+      'kind': kind,
+      'text': text,
+    };
+    if (mode == MessageSendMode.timed) {
+      payload['readTtlMs'] = MessagePolicy.timedMessageReadTtl.inMilliseconds;
+    }
+    return Uint8List.fromList(utf8.encode(jsonEncode(payload)));
+  }
+
+  _DecodedTextPayload _decodeTextPayload(Uint8List payload) {
+    final raw = utf8.decode(payload);
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['meshTextVersion'] != 1) {
+        return _DecodedTextPayload(text: raw);
+      }
+      final text = decoded['text'];
+      final ttlMs = decoded['readTtlMs'] ?? decoded['ttlMs'];
+      return _DecodedTextPayload(
+        text: text is String ? text : raw,
+        ttlMs: ttlMs is int ? ttlMs : null,
+      );
+    } catch (_) {
+      return _DecodedTextPayload(text: raw);
+    }
+  }
+
+  int? _expiresAtForLocalDisplay(MessageSendMode mode) {
+    if (mode != MessageSendMode.timed) return null;
+    return DateTime.now().millisecondsSinceEpoch +
+        MessagePolicy.timedMessageReadTtl.inMilliseconds;
+  }
+
+  Future<Uint8List?> _resolveSenderPublicKey(
+    MeshPacket packet,
+    String fromDeviceId,
+  ) async {
+    if (packet.msgType == MsgType.keyAnnounce) {
+      // KEY_ANNOUNCE: payload에서 직접 publicKey 추출
+      try {
+        final payloadJson = utf8.decode(packet.payload);
+        final map = jsonDecode(payloadJson) as Map<String, dynamic>;
+        if (map['protocolVersion'] != MeshPacket.currentProtocolVersion) {
+          return null;
+        }
+        final publicKeyHex = map['publicKey'] as String?;
+        if (publicKeyHex == null) return null;
+
+        final publicKey = _fromHex(publicKeyHex);
+        if (publicKey.length != 32) return null;
+
+        // node_id 검증 — 위조 방지 (R-06)
+        final expectedNodeId = CryptoService().nodeIdFromPublicKey(publicKey);
+        if (!_bytesEqual(Uint8List.fromList(packet.senderId), expectedNodeId)) {
+          _log(
+            'KEY_ANNOUNCE node_id 위조 감지: sender=${_hexShort(packet.senderId)}',
+          );
+          return null;
+        }
+
+        return publicKey;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // 그 외 유형: ContactService에서 조회
+    return _contacts.getPublicKey(packet.senderId);
+  }
+
+  /// 두 Uint8List의 내용이 동일한지 비교한다.
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// 소문자 hex 문자열 → Uint8List.
+  static Uint8List _fromHex(String hex) {
+    if (hex.length.isOdd) throw const FormatException('홀수 hex 길이');
+    return Uint8List.fromList([
+      for (var i = 0; i < hex.length; i += 2)
+        int.parse(hex.substring(i, i + 2), radix: 16),
+    ]);
+  }
+
+  /// 디버그용 — Uint8List를 짧은 hex 형식으로 변환 (첫 4 bytes).
+  String _hexShort(Uint8List bytes) {
+    final end = bytes.length < 4 ? bytes.length : 4;
+    return bytes
+        .sublist(0, end)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  String _hex(Uint8List bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+  /// 디버그용 — 문자열을 최대 [maxLen]자로 잘라낸다.
+  String _truncate(String s, int maxLen) {
+    if (s.length <= maxLen) return s;
+    return '${s.substring(0, maxLen)}...';
+  }
+
+  void _log(String message) {
+    // ignore: avoid_print
+    print('[MessagingService] $message');
+  }
+}

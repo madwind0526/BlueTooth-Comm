@@ -1,0 +1,43 @@
+# Flutter/Dart
+mesh_comm/build/
+mesh_comm/.dart_tool/
+mesh_comm/.flutter-plugins
+mesh_comm/.flutter-plugins-dependencies
+mesh_comm/.pub-cache/
+mesh_comm/.packages
+mesh_comm/pubspec.lock
+
+# Android
+mesh_comm/android/.gradle/
+mesh_comm/android/local.properties
+mesh_comm/android/key.properties
+mesh_comm/android/app/debug/
+mesh_comm/android/app/profile/
+mesh_comm/android/app/release/
+*.apk
+*.ipa
+*.aab
+
+# Windows
+mesh_comm/windows/flutter/
+mesh_comm/windows/.plugin_symlinks
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Sensitive / test artifacts
+mesh_comm/*.db
+mesh_comm/*.db-shm
+mesh_comm/*.db-wal
+mesh_comm/*_experiment.json
+mesh_comm/tmp_*/
+mesh_comm/s26_*
+
+# Claude session
+.claude/
