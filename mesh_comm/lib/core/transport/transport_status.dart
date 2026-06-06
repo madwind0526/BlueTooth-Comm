@@ -5,6 +5,8 @@ enum TransportKind {
 
   final String label;
   const TransportKind(this.label);
+
+  bool get implementedForMessages => this == TransportKind.bluetooth;
 }
 
 class TransportStatus {

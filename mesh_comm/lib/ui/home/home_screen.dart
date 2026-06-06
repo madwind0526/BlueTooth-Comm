@@ -18,14 +18,17 @@ import 'package:mesh_comm/features/contacts/contact_service.dart';
 import 'package:mesh_comm/features/identity/identity_backup_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
+import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/messaging/topology_demo.dart';
 import 'package:mesh_comm/features/messaging/topology_graph.dart';
 import 'package:mesh_comm/features/messaging/topology_message.dart';
+import 'package:mesh_comm/features/messaging/virtual_mesh_simulator.dart';
 import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 import 'package:mesh_comm/ui/chat/chat_screen.dart';
+import 'package:mesh_comm/ui/chat/group_chat_screen.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
 import 'package:mesh_comm/ui/qr/qr_screen.dart';
 
@@ -70,6 +73,16 @@ Color _roleColor(
   return scheme.onSurface;
 }
 
+int _transportPriority(TransportKind kind) {
+  return switch (kind) {
+    TransportKind.lan => 3,
+    TransportKind.wifi => 2,
+    TransportKind.bluetooth => 1,
+  };
+}
+
+const Object _demoNoChange = Object();
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -101,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _activeTopologyRequestId;
   final Map<String, TopologyResponse> _topologyResponses = {};
   List<Contact> _demoContacts = const [];
+  List<Contact> _demoSavedContacts = const [];
   List<TopologyResponse> _demoTopologyResponses = const [];
   bool _showScanNodeCounts = false;
   AppSettings _settings = const AppSettings();
@@ -327,12 +341,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void _syncDemoTopology(bool enabled) {
     if (!enabled) {
       _demoContacts = const [];
+      _demoSavedContacts = const [];
       _demoTopologyResponses = const [];
       return;
     }
 
     final scenario = DemoTopologyScenario.large();
     _demoContacts = scenario.directContacts;
+    _demoSavedContacts = scenario.allContacts();
     _demoTopologyResponses = scenario.responses;
     _activeTopologyRequestId = 'demo-large';
     _topologyResponses.clear();
@@ -353,6 +369,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ? 'Server mode only relays messages. Chat is disabled.'
           : '${contactDisplayName(contact)} is Server mode. Chat is disabled.';
       _showMessage(message);
+      return;
+    }
+    if (_settings.demoMode) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _DemoChatScreen(
+            self: _demoSelfSummary(),
+            contact: contact,
+            scenario: DemoTopologyScenario.large(),
+          ),
+        ),
+      );
+      if (!mounted) return;
+      _goHome();
       return;
     }
     await DatabaseService().markMessagesReadForContact(
@@ -384,6 +415,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _addScannedContact(Contact contact) async {
+    if (_settings.demoMode) {
+      final savedDemoContact = _copyDemoContact(contact, isSaved: true);
+      setState(() {
+        final savedIds = _demoSavedContacts
+            .map((item) => _nodeHex(item.nodeId))
+            .toSet();
+        if (!savedIds.contains(_nodeHex(contact.nodeId))) {
+          _demoSavedContacts = [..._demoSavedContacts, savedDemoContact];
+        } else {
+          _demoSavedContacts = _demoSavedContacts
+              .map(
+                (item) => _bytesEqual(item.nodeId, contact.nodeId)
+                    ? savedDemoContact
+                    : item,
+              )
+              .toList();
+        }
+        _demoContacts = _demoContacts
+            .map(
+              (item) => _bytesEqual(item.nodeId, contact.nodeId)
+                  ? savedDemoContact
+                  : item,
+            )
+            .toList();
+      });
+      _showMessage('${contactDisplayName(savedDemoContact)} added in demo.');
+      return;
+    }
     final saved = await _contactService.setSaved(contact.nodeId, true);
     if (!saved) {
       final limit = _settings.userLevel.savedContactLimit ?? 0;
@@ -396,8 +455,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _showMessage('${contactDisplayName(contact)} 연락처에 추가했습니다.');
   }
 
-  void _openGroup(LocalContactGroup group) {
+  void openGroupPlaceholder(LocalContactGroup group) {
     _showMessage('${group.name} Group 채팅은 Phase-2에서 연결됩니다.');
+  }
+
+  void _openGroupChat(LocalContactGroup group) {
+    if (!_settings.userLevel.canSendMessages) {
+      _showMessage('Server mode only relays messages. Group chat is disabled.');
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            GroupChatScreen(groupName: group.name, members: group.members),
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -450,6 +523,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<Contact> _savedContactsExcludingSelf() {
+    if (_settings.demoMode) return _demoSavedContacts;
     final myNodeId = IdentityService().myNodeId;
     return _contacts
         .where(
@@ -457,6 +531,19 @@ class _HomeScreenState extends State<HomeScreen> {
               contact.isSaved && !_bytesEqual(contact.nodeId, myNodeId),
         )
         .toList();
+  }
+
+  TopologyNodeSummary _demoSelfSummary() {
+    return TopologyNodeSummary(
+      nodeId: IdentityService().myNodeId,
+      displayName: _settings.displayName.trim().isEmpty
+          ? 'Me'
+          : _settings.displayName.trim(),
+      deviceType: IdentityService().myDeviceType,
+      userLevel: _settings.userLevel,
+      isSaved: true,
+      lastSeen: DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   bool _bytesEqual(Uint8List a, Uint8List b) {
@@ -526,6 +613,11 @@ class _HomeScreenState extends State<HomeScreen> {
     Contact contact,
     _ContactAction action,
   ) async {
+    if (_settings.demoMode &&
+        !_bytesEqual(contact.nodeId, IdentityService().myNodeId)) {
+      await _handleDemoContactAction(contact, action);
+      return;
+    }
     if (_bytesEqual(contact.nodeId, IdentityService().myNodeId)) {
       await _handleSelfContactAction(contact, action);
       return;
@@ -547,6 +639,100 @@ class _HomeScreenState extends State<HomeScreen> {
         await _deleteContactMessages(contact);
       case _ContactAction.delete:
         await _deleteContact(contact);
+    }
+  }
+
+  Future<void> _handleDemoContactAction(
+    Contact contact,
+    _ContactAction action,
+  ) async {
+    switch (action) {
+      case _ContactAction.rename:
+        final name = await _askForText(
+          title: 'Demo rename',
+          label: 'Display name',
+          initialValue: contact.displayName ?? '',
+          hint: 'Demo mode only. Real contacts are not changed.',
+        );
+        if (name == null) return;
+        _replaceDemoContact(
+          contact.nodeId,
+          (current) => _copyDemoContact(
+            current,
+            displayName: name.trim().isEmpty ? null : name.trim(),
+          ),
+        );
+      case _ContactAction.toggleTrust:
+        _replaceDemoContact(
+          contact.nodeId,
+          (current) => _copyDemoContact(current, isTrusted: !current.isTrusted),
+        );
+      case _ContactAction.toggleFavorite:
+        _replaceDemoContact(
+          contact.nodeId,
+          (current) =>
+              _copyDemoContact(current, isFavorite: !current.isFavorite),
+        );
+      case _ContactAction.setGroup:
+        final group = await _askForText(
+          title: contact.groupName == null ? 'Demo group' : 'Demo group',
+          label: 'Group name',
+          initialValue: contact.groupName ?? '',
+          hint: 'Empty clears the demo group.',
+        );
+        if (group == null) return;
+        _replaceDemoContact(
+          contact.nodeId,
+          (current) => _copyDemoContact(
+            current,
+            groupName: group.trim().isEmpty ? null : group.trim(),
+          ),
+        );
+      case _ContactAction.setAvatar:
+        var selectedKey = contact.avatarKey ?? AvatarRegistry.defaultKey;
+        final nextKey = await showDialog<String>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Demo avatar'),
+              content: SizedBox(
+                width: 300,
+                child: AvatarPickerGrid(
+                  selectedKey: selectedKey,
+                  onSelected: (key) => setDialogState(() => selectedKey = key),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, selectedKey),
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (nextKey == null) return;
+        _replaceDemoContact(
+          contact.nodeId,
+          (current) => _copyDemoContact(current, avatarKey: nextKey),
+        );
+      case _ContactAction.setLevel:
+        await _setDemoContactLevel(contact);
+      case _ContactAction.deleteMessages:
+        _showMessage('Demo messages are cleared when you leave demo chat.');
+      case _ContactAction.delete:
+        setState(() {
+          _demoSavedContacts = _demoSavedContacts
+              .where((item) => !_bytesEqual(item.nodeId, contact.nodeId))
+              .toList();
+          _demoContacts = _demoContacts
+              .where((item) => !_bytesEqual(item.nodeId, contact.nodeId))
+              .toList();
+        });
     }
   }
 
@@ -580,6 +766,10 @@ class _HomeScreenState extends State<HomeScreen> {
     LocalContactGroup group,
     _GroupAction action,
   ) async {
+    if (_settings.demoMode) {
+      await _handleDemoGroupAction(group, action);
+      return;
+    }
     switch (action) {
       case _GroupAction.rename:
         await _renameGroup(group);
@@ -594,6 +784,48 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _handleDemoGroupAction(
+    LocalContactGroup group,
+    _GroupAction action,
+  ) async {
+    switch (action) {
+      case _GroupAction.rename:
+        final name = await _askForText(
+          title: 'Demo group rename',
+          label: 'Group name',
+          initialValue: group.name,
+          hint: 'Demo mode only. Real contacts are not changed.',
+        );
+        if (name == null || name.trim().isEmpty) return;
+        final memberIds = group.members
+            .map((contact) => _nodeHex(contact.nodeId))
+            .toSet();
+        _replaceAllDemoContacts(
+          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
+              ? _copyDemoContact(contact, groupName: name.trim())
+              : contact,
+        );
+      case _GroupAction.toggleFavorite:
+        final memberIds = group.members
+            .map((contact) => _nodeHex(contact.nodeId))
+            .toSet();
+        _replaceAllDemoContacts(
+          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
+              ? _copyDemoContact(contact, isFavorite: !group.isFavorite)
+              : contact,
+        );
+      case _GroupAction.delete:
+        final memberIds = group.members
+            .map((contact) => _nodeHex(contact.nodeId))
+            .toSet();
+        _replaceAllDemoContacts(
+          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
+              ? _copyDemoContact(contact, groupName: null)
+              : contact,
+        );
+    }
+  }
+
   Future<void> _renameContact(Contact contact) async {
     final name = await _askForText(
       title: '이름 변경',
@@ -602,7 +834,11 @@ class _HomeScreenState extends State<HomeScreen> {
       hint: '비워두면 node ID로 표시됩니다.',
     );
     if (name == null) return;
-    await _contactService.renameContact(contact.nodeId, name);
+    final trimmed = name.trim();
+    await _contactService.renameContact(
+      contact.nodeId,
+      trimmed.isEmpty ? null : trimmed,
+    );
   }
 
   Future<void> _renameSelfContact(Contact contact) async {
@@ -625,7 +861,11 @@ class _HomeScreenState extends State<HomeScreen> {
       hint: '비워두면 Group에서 제외됩니다.',
     );
     if (group == null) return;
-    await _contactService.setGroup(contact.nodeId, group);
+    final trimmed = group.trim();
+    await _contactService.setGroup(
+      contact.nodeId,
+      trimmed.isEmpty ? null : trimmed,
+    );
   }
 
   Future<void> _setContactAvatar(Contact contact) async {
@@ -789,7 +1029,128 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (nextLevel == null) return;
-    await _contactService.setUserLevel(contact.nodeId, nextLevel);
+    try {
+      await _contactService.setUserLevel(contact.nodeId, nextLevel);
+    } catch (_) {
+      _showMessage('Not authorized to change this level.');
+      return;
+    }
+    if (!_settings.demoMode) {
+      final sent = await MessagingService().sendLevelChangeRequest(
+        targetNodeId: contact.nodeId,
+        level: nextLevel,
+      );
+      if (!sent) {
+        _showMessage(
+          'Level saved locally. Remote update will retry when connected.',
+        );
+      }
+    }
+  }
+
+  Future<void> _setDemoContactLevel(Contact contact) async {
+    if (!_settings.userLevel.canAssignContactLevels) {
+      _showMessage(
+        'Only Admin, Builder, or Creator can change contact levels.',
+      );
+      return;
+    }
+    if (!_settings.userLevel.canChangeContactLevel(contact.userLevel)) {
+      _showMessage(
+        'Cannot change ${contact.userLevel.label}; only lower levels can be changed.',
+      );
+      return;
+    }
+    final levels = _settings.userLevel.contactAssignableLevels;
+    var selected = levels.contains(contact.userLevel)
+        ? contact.userLevel
+        : levels.first;
+    final nextLevel = await showDialog<UserLevel>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Demo contact level'),
+          content: DropdownButton<UserLevel>(
+            value: selected,
+            isExpanded: true,
+            items: [
+              for (final level in levels)
+                DropdownMenuItem(value: level, child: Text(level.label)),
+            ],
+            onChanged: (level) {
+              if (level != null) setDialogState(() => selected = level);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (nextLevel == null) return;
+    _replaceDemoContact(
+      contact.nodeId,
+      (current) => _copyDemoContact(current, userLevel: nextLevel),
+    );
+  }
+
+  void _replaceDemoContact(
+    Uint8List nodeId,
+    Contact Function(Contact contact) transform,
+  ) {
+    _replaceAllDemoContacts(
+      (contact) =>
+          _bytesEqual(contact.nodeId, nodeId) ? transform(contact) : contact,
+    );
+  }
+
+  void _replaceAllDemoContacts(Contact Function(Contact contact) transform) {
+    setState(() {
+      _demoSavedContacts = _demoSavedContacts.map(transform).toList();
+      _demoContacts = _demoContacts.map(transform).toList();
+    });
+  }
+
+  Contact _copyDemoContact(
+    Contact contact, {
+    Object? displayName = _demoNoChange,
+    bool? isTrusted,
+    bool? isFavorite,
+    Object? groupName = _demoNoChange,
+    MeshDeviceType? deviceType,
+    Object? avatarKey = _demoNoChange,
+    bool? isSaved,
+    UserLevel? userLevel,
+  }) {
+    return Contact(
+      nodeId: contact.nodeId,
+      publicKey: contact.publicKey,
+      encryptionPublicKey: contact.encryptionPublicKey,
+      displayName: identical(displayName, _demoNoChange)
+          ? contact.displayName
+          : displayName as String?,
+      isTrusted: isTrusted ?? contact.isTrusted,
+      fingerprint: contact.fingerprint,
+      firstSeen: contact.firstSeen,
+      lastSeen: contact.lastSeen,
+      isFavorite: isFavorite ?? contact.isFavorite,
+      groupName: identical(groupName, _demoNoChange)
+          ? contact.groupName
+          : groupName as String?,
+      deviceType: deviceType ?? contact.deviceType,
+      avatarKey: identical(avatarKey, _demoNoChange)
+          ? contact.avatarKey
+          : avatarKey as String?,
+      isSaved: isSaved ?? contact.isSaved,
+      userLevel: userLevel ?? contact.userLevel,
+    );
   }
 
   Future<void> _renameGroup(LocalContactGroup group) async {
@@ -1008,10 +1369,18 @@ class _HomeScreenState extends State<HomeScreen> {
         savedPath = file.path;
       }
 
+      final autoFile = await _identityAutoBackupFile();
+      await autoFile.writeAsString(json);
+
       _showMessage('Encrypted identity backup 저장 완료: $savedPath');
     } catch (e) {
       _showMessage('Identity backup 실패: $e');
     }
+  }
+
+  Future<File> _identityAutoBackupFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File(p.join(dir.path, 'mesh_comm_identity_auto.enc.json'));
   }
 
   Future<void> _restoreIdentity() async {
@@ -1038,20 +1407,47 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirmed != true) return;
 
     try {
-      final file = await openFile(
-        acceptedTypeGroups: const [
-          XTypeGroup(
-            label: 'Encrypted MeshComm identity',
-            extensions: ['json'],
-          ),
-        ],
-      );
-      if (file == null) return;
+      final autoFile = await _identityAutoBackupFile();
+      final hasAutoFile = await autoFile.exists();
+      if (!mounted) return;
+      final useAutoFile = hasAutoFile
+          ? await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Use auto backup?'),
+                content: Text('Use ${p.basename(autoFile.path)}?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Choose file'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Use backup'),
+                  ),
+                ],
+              ),
+            )
+          : false;
+      final rawJson = useAutoFile == true
+          ? await autoFile.readAsString()
+          : await (() async {
+              final file = await openFile(
+                acceptedTypeGroups: const [
+                  XTypeGroup(
+                    label: 'Encrypted MeshComm identity',
+                    extensions: ['json'],
+                  ),
+                ],
+              );
+              return file?.readAsString();
+            })();
+      if (rawJson == null) return;
       final password = await _askIdentityBackupPassword(confirm: false);
       if (password == null) return;
 
       final nodeId = await _identityBackupService.restoreFromJson(
-        await file.readAsString(),
+        rawJson,
         password: password,
       );
       _showMessage(
@@ -1345,7 +1741,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_filter == HomeFilter.groups) {
       return _GroupList(
         groups: buildGroups([selfContact, ...savedContacts]),
-        onTap: _openGroup,
+        onTap: _openGroupChat,
         onAction: _handleGroupAction,
       );
     }
@@ -1400,7 +1796,7 @@ class _HomeScreenState extends State<HomeScreen> {
               for (final group in groups)
                 _GroupTile(
                   group: group,
-                  onTap: () => _openGroup(group),
+                  onTap: () => _openGroupChat(group),
                   onAction: (action) => _handleGroupAction(group, action),
                 ),
               if (contacts.isNotEmpty) const _SectionLabel(label: 'Contacts'),
@@ -1428,8 +1824,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final parsedDepth =
         int.tryParse(_scanDepthController.text.trim()) ??
         _settings.scanDefaultDepth;
-    final depth = _limitedScanDepth(parsedDepth);
     final demoMode = _settings.demoMode;
+    final depth = demoMode ? parsedDepth : _limitedScanDepth(parsedDepth);
     final visibleContacts = depth == 0
         ? <Contact>[]
         : demoMode
@@ -1462,6 +1858,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _ScanTreePreview(
             contacts: visibleContacts,
+            knownContacts: demoMode ? _demoSavedContacts : _contacts,
             topologyResponses: topologyResponses,
             depth: depth,
             isScanning: _isScanning,
@@ -1999,6 +2396,7 @@ class _UnreadBadge extends StatelessWidget {
 
 class _ScanTreePreview extends StatelessWidget {
   final List<Contact> contacts;
+  final List<Contact> knownContacts;
   final List<TopologyResponse> topologyResponses;
   final int depth;
   final bool isScanning;
@@ -2013,6 +2411,7 @@ class _ScanTreePreview extends StatelessWidget {
 
   const _ScanTreePreview({
     required this.contacts,
+    required this.knownContacts,
     required this.topologyResponses,
     required this.depth,
     required this.isScanning,
@@ -2035,6 +2434,7 @@ class _ScanTreePreview extends StatelessWidget {
           Positioned.fill(
             child: _ScanMapCard(
               contacts: contacts,
+              knownContacts: knownContacts,
               topologyResponses: topologyResponses,
               depth: depth,
               isScanning: isScanning,
@@ -2068,6 +2468,7 @@ class _ScanTreePreview extends StatelessWidget {
 
 class _ScanMapCard extends StatefulWidget {
   final List<Contact> contacts;
+  final List<Contact> knownContacts;
   final List<TopologyResponse> topologyResponses;
   final int depth;
   final bool isScanning;
@@ -2082,6 +2483,7 @@ class _ScanMapCard extends StatefulWidget {
 
   const _ScanMapCard({
     required this.contacts,
+    required this.knownContacts,
     required this.topologyResponses,
     required this.depth,
     required this.isScanning,
@@ -2245,6 +2647,7 @@ class _ScanMapCardState extends State<_ScanMapCard> {
                         : null,
                     onChat:
                         selectedNode.contact == null ||
+                            !widget.myUserLevel.canSendMessages ||
                             !selectedNode.contact!.userLevel.canSendMessages
                         ? null
                         : () {
@@ -2276,6 +2679,10 @@ class _ScanMapCardState extends State<_ScanMapCard> {
       responses: widget.topologyResponses,
       depth: widget.depth,
     );
+    final knownById = {
+      for (final contact in widget.knownContacts) contactCode(contact): contact,
+    };
+    final routeByNodeId = _routesFromSelf(graph);
     final positions = _buildClusterPositions(graph, mapSize);
     final center = Offset(mapSize.width / 2, mapSize.height / 2);
     final maxDepth = math.max(
@@ -2298,6 +2705,9 @@ class _ScanMapCardState extends State<_ScanMapCard> {
       for (var i = 0; i < ringNodes.length; i++) {
         final graphNode = ringNodes[i];
         final isSelf = ringDepth == 0;
+        final contact = graphNode.contact ?? knownById[graphNode.id];
+        final routeKind =
+            routeByNodeId[graphNode.id] ?? graphNode.summary.transportKind;
         final angle =
             -math.pi / 2 + (2 * math.pi * i / math.max(1, ringNodes.length));
         final radius = isSelf ? 0.0 : maxRadius * ringDepth / maxDepth;
@@ -2313,20 +2723,18 @@ class _ScanMapCardState extends State<_ScanMapCard> {
             subtitle: [
               _deviceLabel(graphNode.summary.deviceType),
               'depth ${graphNode.depth}',
-              graphNode.contact?.isSaved ?? graphNode.summary.isSaved
-                  ? 'known'
-                  : 'new',
-              graphNode.summary.transportKind.label,
+              contact?.isSaved ?? graphNode.summary.isSaved ? 'known' : 'new',
+              routeKind.label,
             ].join(' · '),
             position: positions[graphNode.id] ?? position,
             deviceType: graphNode.summary.deviceType,
             userLevel: graphNode.summary.userLevel,
+            routeKind: routeKind,
             connectionCount: graphNode.connectionCount,
             isMe: isSelf,
-            isSavedContact:
-                graphNode.contact?.isSaved ?? graphNode.summary.isSaved,
-            isFavorite: graphNode.contact?.isFavorite ?? false,
-            contact: graphNode.contact,
+            isSavedContact: contact?.isSaved ?? graphNode.summary.isSaved,
+            isFavorite: contact?.isFavorite ?? false,
+            contact: contact,
           ),
         );
       }
@@ -2340,6 +2748,47 @@ class _ScanMapCardState extends State<_ScanMapCard> {
       scanEdges.add(_ScanMapEdge(from, to, edge.transportKind));
     }
     return _ScanMapLayout(nodes: scanNodes, edges: scanEdges);
+  }
+
+  Map<String, TransportKind> _routesFromSelf(TopologyGraph graph) {
+    String? self;
+    for (final node in graph.nodes) {
+      if (node.depth == 0) {
+        self = node.id;
+        break;
+      }
+    }
+    if (self == null) return const {};
+    final adjacency = <String, List<(String, TransportKind)>>{};
+    for (final edge in graph.edges) {
+      adjacency.putIfAbsent(edge.fromId, () => <(String, TransportKind)>[]).add(
+        (edge.toId, edge.transportKind),
+      );
+      adjacency.putIfAbsent(edge.toId, () => <(String, TransportKind)>[]).add((
+        edge.fromId,
+        edge.transportKind,
+      ));
+    }
+    final routes = <String, TransportKind>{};
+    final visited = <String>{self};
+    final queue = <String>[self];
+    for (var index = 0; index < queue.length; index++) {
+      final current = queue[index];
+      final neighbors = adjacency[current] ?? const <(String, TransportKind)>[];
+      for (final (next, transportKind) in neighbors) {
+        if (!visited.add(next)) continue;
+        final parentRoute = routes[current];
+        routes[next] = parentRoute == null
+            ? transportKind
+            : _bestTransport(parentRoute, transportKind);
+        queue.add(next);
+      }
+    }
+    return routes;
+  }
+
+  TransportKind _bestTransport(TransportKind left, TransportKind right) {
+    return _transportPriority(left) >= _transportPriority(right) ? left : right;
   }
 
   Map<String, Offset> _buildClusterPositions(
@@ -2525,6 +2974,7 @@ class _ScanMapCardState extends State<_ScanMapCard> {
         position: center,
         deviceType: widget.myDeviceType,
         userLevel: widget.myUserLevel,
+        routeKind: TransportKind.bluetooth,
         connectionCount: visibleContacts.length,
         isMe: true,
         isSavedContact: true,
@@ -2557,6 +3007,7 @@ class _ScanMapCardState extends State<_ScanMapCard> {
           position: position,
           deviceType: contact.deviceType,
           userLevel: contact.userLevel,
+          routeKind: TransportKind.bluetooth,
           connectionCount: 1,
           isSavedContact: contact.isSaved,
           isFavorite: contact.isFavorite,
@@ -2707,10 +3158,13 @@ class _ScanMapCard extends StatelessWidget {
     final center = Offset(_mapSize.width / 2, _mapSize.height / 2);
     final nodes = <_ScanMapNode>[
       _ScanMapNode(
+        id: 'me',
         title: myName.trim().isEmpty ? 'Me' : myName.trim(),
         subtitle: '${_deviceLabel(myDeviceType)} · Me',
         position: center,
         deviceType: myDeviceType,
+        userLevel: myUserLevel,
+        routeKind: TransportKind.bluetooth,
         connectionCount: visibleContacts.length,
         isMe: true,
         isSavedContact: true,
@@ -2733,6 +3187,7 @@ class _ScanMapCard extends StatelessWidget {
       );
       nodes.add(
         _ScanMapNode(
+          id: contactCode(contact),
           title: contactDisplayName(contact),
           subtitle: [
             _deviceLabel(contact.deviceType),
@@ -2741,6 +3196,8 @@ class _ScanMapCard extends StatelessWidget {
           ].join(' · '),
           position: position,
           deviceType: contact.deviceType,
+          userLevel: contact.userLevel,
+          routeKind: TransportKind.bluetooth,
           connectionCount: 1,
           isSavedContact: contact.isSaved,
           isFavorite: contact.isFavorite,
@@ -2786,7 +3243,7 @@ class _ScanMapCard extends StatelessWidget {
                   const SizedBox(height: 10),
                   _NodeInfoLine('Type', _deviceLabel(node.deviceType)),
                   _NodeInfoLine('Links', node.connectionCount.toString()),
-                  const _NodeInfoLine('Route', 'BLE'),
+                  _NodeInfoLine('Route', node.routeKind.label),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -2887,7 +3344,7 @@ class _ScanNodeInfoPanel extends StatelessWidget {
               _NodeInfoLine('Type', deviceLabel),
               _NodeInfoLine('Level', node.userLevel.label),
               _NodeInfoLine('Links', node.connectionCount.toString()),
-              const _NodeInfoLine('Route', 'BLE'),
+              _NodeInfoLine('Route', node.routeKind.label),
               const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -3024,6 +3481,7 @@ class _ScanMapNode {
   final Offset position;
   final MeshDeviceType deviceType;
   final UserLevel userLevel;
+  final TransportKind routeKind;
   final int connectionCount;
   final bool isMe;
   final bool isSavedContact;
@@ -3037,6 +3495,7 @@ class _ScanMapNode {
     required this.position,
     required this.deviceType,
     required this.userLevel,
+    required this.routeKind,
     required this.connectionCount,
     this.isMe = false,
     this.isSavedContact = false,
@@ -3352,6 +3811,191 @@ class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
         );
       },
     );
+  }
+}
+
+class _DemoChatMessage {
+  final String text;
+  final bool outgoing;
+  final int timestamp;
+
+  const _DemoChatMessage({
+    required this.text,
+    required this.outgoing,
+    required this.timestamp,
+  });
+}
+
+class _DemoChatScreen extends StatefulWidget {
+  final TopologyNodeSummary self;
+  final Contact contact;
+  final DemoTopologyScenario scenario;
+
+  const _DemoChatScreen({
+    required this.self,
+    required this.contact,
+    required this.scenario,
+  });
+
+  @override
+  State<_DemoChatScreen> createState() => _DemoChatScreenState();
+}
+
+class _DemoChatScreenState extends State<_DemoChatScreen> {
+  late final VirtualMeshSimulator _simulator;
+  final _messages = <_DemoChatMessage>[];
+  final _controller = TextEditingController();
+  MessageSendMode _mode = MessageSendMode.normal;
+
+  @override
+  void initState() {
+    super.initState();
+    _simulator = VirtualMeshSimulator.fromDemo(
+      self: widget.self,
+      scenario: widget.scenario,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final result = _simulator.send(
+      senderId: nodeIdHex(widget.self.nodeId),
+      targetId: contactCode(widget.contact),
+      text: text,
+      mode: _mode,
+      nowMs: now,
+    );
+    if (!result.accepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.blockedReason ?? 'Demo send failed.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _messages.add(
+        _DemoChatMessage(text: text, outgoing: true, timestamp: now),
+      );
+      if (!_mode.isNotice) {
+        _messages.add(
+          _DemoChatMessage(
+            text: '(Re)$text',
+            outgoing: false,
+            timestamp: now + 500,
+          ),
+        );
+      }
+      _controller.clear();
+    });
+
+    if (_mode.isNotice) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Demo notice propagated to ${result.deliveries.length} nodes.',
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${contactDisplayName(widget.contact)} · Demo'),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final message = _messages[index];
+                return Align(
+                  alignment: message.outgoing
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: message.outgoing
+                            ? scheme.primaryContainer
+                            : scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        child: Text(message.text),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Row(
+                children: [
+                  DropdownButton<MessageSendMode>(
+                    value: _mode,
+                    items: [
+                      for (final mode in MessageSendMode.values)
+                        DropdownMenuItem(
+                          value: mode,
+                          child: Text(_demoModeLabel(mode)),
+                        ),
+                    ],
+                    onChanged: (mode) {
+                      if (mode != null) setState(() => _mode = mode);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      maxLength: _mode.maxLength,
+                      decoration: const InputDecoration(
+                        hintText: 'Demo message',
+                        counterText: '',
+                      ),
+                      onSubmitted: (_) => _send(),
+                    ),
+                  ),
+                  IconButton(onPressed: _send, icon: const Icon(Icons.send)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _demoModeLabel(MessageSendMode mode) {
+    return switch (mode) {
+      MessageSendMode.normal => '일반',
+      MessageSendMode.timed => '타임',
+      MessageSendMode.shortNotice => '공지S',
+      MessageSendMode.longNotice => '공지L',
+    };
   }
 }
 

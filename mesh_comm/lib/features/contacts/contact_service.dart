@@ -44,6 +44,9 @@ class ContactService {
     final existingDisplayName = existing?['display_name'] as String?;
     final existingAvatarKey = existing?['avatar_key'] as String?;
     final existingSaved = (existing?['is_saved'] as int? ?? 0) == 1;
+    final existingUserLevel = UserLevel.fromWire(
+      existing?['user_level'] as String?,
+    );
     final previousRemoteDisplayName =
         existing?['remote_display_name'] as String?;
     final previousRemoteAvatarKey = existing?['remote_avatar_key'] as String?;
@@ -59,6 +62,11 @@ class ContactService {
     final storedAvatarKey = shouldAdoptRemoteAvatar
         ? remoteAvatarKey ?? existingAvatarKey
         : existingAvatarKey;
+    final storedUserLevel = _levelFromKeyAnnounce(
+      existing: existing,
+      existingLevel: existingUserLevel,
+      announcedLevel: userLevel,
+    );
 
     await _removeReplaceableDuplicateContacts(
       nodeId: nodeId,
@@ -79,7 +87,7 @@ class ContactService {
       remoteDisplayName: remoteDisplayName,
       remoteAvatarKey: remoteAvatarKey,
       savedContact: savedContact || existingSaved,
-      userLevel: userLevel.wireName,
+      userLevel: storedUserLevel.wireName,
     );
 
     final contact = Contact(
@@ -96,11 +104,29 @@ class ContactService {
       deviceType: deviceType,
       avatarKey: storedAvatarKey,
       isSaved: savedContact || existingSaved,
-      userLevel: userLevel,
+      userLevel: storedUserLevel,
     );
 
     await _emitContacts();
     return contact;
+  }
+
+  UserLevel _levelFromKeyAnnounce({
+    required Map<String, dynamic>? existing,
+    required UserLevel existingLevel,
+    required UserLevel announcedLevel,
+  }) {
+    final selfSelectable =
+        announcedLevel == UserLevel.user || announcedLevel == UserLevel.server;
+    if (existing == null) {
+      return selfSelectable ? announcedLevel : UserLevel.user;
+    }
+    if (existingLevel == UserLevel.creator ||
+        existingLevel == UserLevel.builder ||
+        existingLevel == UserLevel.admin) {
+      return existingLevel;
+    }
+    return selfSelectable ? announcedLevel : existingLevel;
   }
 
   Future<void> _removeReplaceableDuplicateContacts({
@@ -113,7 +139,7 @@ class ContactService {
     if (normalizedName == null) return;
 
     final messageNodeIds = (await _db.getContactNodeIdsWithMessages(
-      Uint8List(16),
+      IdentityService().myNodeId,
     )).map(_hex).toSet();
     final rows = await _db.getAllContacts();
 
@@ -288,7 +314,10 @@ class ContactService {
   Future<void> refresh() => _emitContacts();
 
   Future<void> deleteContact(Uint8List nodeId) async {
-    await _db.deleteMessagesForContact(nodeId);
+    await _db.deleteMessagesForContact(
+      nodeId,
+      myNodeId: IdentityService().myNodeId,
+    );
     await _db.deleteContact(nodeId);
     await _emitContacts();
   }
@@ -299,7 +328,7 @@ class ContactService {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final cutoffMs = nowMs - staleAfter.inMilliseconds;
     final messageNodeIds = (await _db.getContactNodeIdsWithMessages(
-      Uint8List(16),
+      IdentityService().myNodeId,
     )).map(_hex).toSet();
     final contacts = await getAllContacts();
     var removed = 0;
@@ -316,7 +345,10 @@ class ContactService {
           contact.lastSeen < cutoffMs;
 
       if (!shouldRemove) continue;
-      await _db.deleteMessagesForContact(contact.nodeId);
+      await _db.deleteMessagesForContact(
+        contact.nodeId,
+        myNodeId: IdentityService().myNodeId,
+      );
       await _db.deleteContact(contact.nodeId);
       removed++;
     }
@@ -356,6 +388,17 @@ class ContactService {
   }
 
   Future<void> setUserLevel(Uint8List nodeId, UserLevel level) async {
+    final row = await _db.getContact(nodeId);
+    final currentLevel = UserLevel.fromWire(row?['user_level'] as String?);
+    final myLevel = AppSettingsService().current.userLevel;
+    final isSelf = _bytesEqual(nodeId, IdentityService().myNodeId);
+    final allowed = isSelf
+        ? myLevel.selfSelectableLevels.contains(level)
+        : myLevel.canChangeContactLevel(currentLevel) &&
+              myLevel.contactAssignableLevels.contains(level);
+    if (!allowed) {
+      throw StateError('Not authorized to change contact level.');
+    }
     await _db.setContactUserLevel(nodeId, level.wireName);
     await _emitContacts();
   }

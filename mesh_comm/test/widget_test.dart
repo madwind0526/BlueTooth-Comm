@@ -11,6 +11,7 @@ import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
+import 'package:mesh_comm/features/messaging/message_attachment_policy.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/messaging/topology_demo.dart';
 import 'package:mesh_comm/features/messaging/topology_graph.dart';
@@ -149,6 +150,22 @@ void main() {
     expect(MessagePolicy.noticeMaxLength, 50);
     expect(MessagePolicy.noticeCooldown, const Duration(days: 1));
     expect(MessagePolicy.timedMessageReadTtl, const Duration(minutes: 1));
+  });
+
+  test('transport and attachment policies expose current limits', () {
+    expect(TransportKind.bluetooth.implementedForMessages, isTrue);
+    expect(TransportKind.lan.implementedForMessages, isFalse);
+    expect(TransportKind.wifi.implementedForMessages, isFalse);
+
+    expect(MessageAttachmentPolicy.maxImagesPerMessage, 10);
+    expect(MessageAttachmentPolicy.isSupportedExtension('jpg'), isTrue);
+    expect(MessageAttachmentPolicy.isSupportedExtension('.zip'), isTrue);
+    expect(MessageAttachmentPolicy.isSupportedExtension('exe'), isFalse);
+    expect(MessageAttachmentPolicy.canPreviewInline('png', 128 * 1024), isTrue);
+    expect(
+      MessageAttachmentPolicy.canPreviewInline('png', 512 * 1024),
+      isFalse,
+    );
   });
 
   test('avatar registry exposes small built-in animal options', () {

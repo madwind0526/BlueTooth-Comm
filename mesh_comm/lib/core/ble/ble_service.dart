@@ -71,6 +71,7 @@ class BleService {
   /// device별 BLE 전송을 순서대로 처리하여 notify/write가 겹치지 않게 한다.
   final Map<String, Future<void>> _sendQueues = {};
   final Map<String, DateTime> _lastSendFailureAt = {};
+  final Map<String, int> _sendFailureCounts = {};
 
   /// 연결 협상 중인 device ID. 반복 scan result로 인한 중복 연결을 막는다.
   final Set<String> _connectingDevices = {};
@@ -283,7 +284,8 @@ class BleService {
     const maxAttempts = 2;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       final lastFailureAt = _lastSendFailureAt[deviceId];
-      if (lastFailureAt != null &&
+      if (attempt > 0 &&
+          lastFailureAt != null &&
           DateTime.now().difference(lastFailureAt) <
               const Duration(milliseconds: 120)) {
         await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -291,6 +293,7 @@ class BleService {
       final success = await _sendPacketAttempt(packet, deviceId);
       if (success) {
         _lastSendFailureAt.remove(deviceId);
+        _sendFailureCounts.remove(deviceId);
         return true;
       }
       _messageCharacteristics.remove(deviceId);
@@ -299,7 +302,19 @@ class BleService {
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
     }
+    await _recordSendFailure(deviceId);
     return false;
+  }
+
+  Future<void> _recordSendFailure(String deviceId) async {
+    final failures = (_sendFailureCounts[deviceId] ?? 0) + 1;
+    _sendFailureCounts[deviceId] = failures;
+    if (failures < 3 || !isConnected(deviceId)) return;
+
+    _log(
+      'sendPacket: removing stale connection $deviceId after $failures failures',
+    );
+    await disconnect(deviceId);
   }
 
   Future<bool> _sendPacketAttempt(MeshPacket packet, String deviceId) async {
@@ -394,6 +409,7 @@ class BleService {
         _peripheralMtuByDevice.remove(deviceId);
         _sendQueues.remove(deviceId);
         _lastSendFailureAt.remove(deviceId);
+        _sendFailureCounts.remove(deviceId);
         _fragmentReassembler.removeDevice(deviceId);
         _notifyConnectionChange();
       }
@@ -568,6 +584,7 @@ class BleService {
     _messageCharacteristics.remove(deviceId);
     _sendQueues.remove(deviceId);
     _lastSendFailureAt.remove(deviceId);
+    _sendFailureCounts.remove(deviceId);
     _notificationSubscriptions[deviceId]?.cancel();
     _notificationSubscriptions.remove(deviceId);
     _fragmentReassembler.removeDevice(deviceId);
@@ -612,6 +629,7 @@ class BleService {
         _peripheralMtuByDevice.remove(deviceId);
         _sendQueues.remove(deviceId);
         _lastSendFailureAt.remove(deviceId);
+        _sendFailureCounts.remove(deviceId);
         _fragmentReassembler.removeDevice(deviceId);
         _log('Peripheral central disconnected: $deviceId');
       }
@@ -763,6 +781,7 @@ class BleService {
     _messageCharacteristics.clear();
     _sendQueues.clear();
     _lastSendFailureAt.clear();
+    _sendFailureCounts.clear();
     _fragmentReassembler.clear();
 
     for (final sub in _connectionSubscriptions.values) {

@@ -3,6 +3,7 @@ class MessagePolicy {
 
   static const int normalMaxLength = 160;
   static const int noticeMaxLength = 50;
+  static const int maxTextPayloadBytes = 64 * 1024;
   static const Duration timedMessageReadTtl = Duration(minutes: 1);
   static const Duration noticeCooldown = Duration(days: 1);
   static const int shortNoticeTtl = 3;
@@ -19,8 +20,7 @@ enum MessageSendMode {
   const MessageSendMode(this.label);
 
   bool get isNotice =>
-      this == MessageSendMode.shortNotice ||
-      this == MessageSendMode.longNotice;
+      this == MessageSendMode.shortNotice || this == MessageSendMode.longNotice;
 
   int get maxLength =>
       isNotice ? MessagePolicy.noticeMaxLength : MessagePolicy.normalMaxLength;

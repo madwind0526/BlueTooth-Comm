@@ -10,6 +10,7 @@ import 'package:mesh_comm/core/diagnostics/diagnostic_config.dart';
 import 'package:mesh_comm/core/packet/mesh_packet.dart';
 import 'package:mesh_comm/core/packet/msg_type.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
+import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/contacts/contact_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
@@ -81,6 +82,28 @@ class ReceivedMessage {
 /// await BleService().init(myNodeId: ..., onPacketReceived: ...);
 /// await MessagingService().init();
 /// ```
+class GroupSendResult {
+  final int attempted;
+  final int sent;
+  final int skipped;
+  final String? blockedReason;
+
+  const GroupSendResult({
+    required this.attempted,
+    required this.sent,
+    required this.skipped,
+    this.blockedReason,
+  });
+
+  const GroupSendResult.blocked(String reason)
+    : attempted = 0,
+      sent = 0,
+      skipped = 0,
+      blockedReason = reason;
+
+  bool get sentAny => sent > 0;
+}
+
 class _DecodedTextPayload {
   final String text;
   final int? ttlMs;
@@ -108,6 +131,7 @@ class MessagingService {
   Timer? _keyAnnounceTimer;
   Timer? _connectionAnnounceTimer;
   final Set<String> _keyAnnounceRespondedNodeIds = {};
+  final Map<String, int> _topologyRequestsHandledAt = {};
   StreamSubscription<List<String>>? _connectionSubscription;
   Set<String> _knownBleDeviceIds = {};
 
@@ -182,7 +206,6 @@ class MessagingService {
 
     // KEY_ANNOUNCE 5분 주기 재전송 (R-10)
     _keyAnnounceTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
-      _keyAnnounceRespondedNodeIds.clear();
       await broadcastKeyAnnounce();
     });
 
@@ -321,6 +344,77 @@ class MessagingService {
   /// 자신의 공개키를 담은 KEY_ANNOUNCE 패킷을 브로드캐스트한다 (R-10).
   ///
   /// [IdentityService.createKeyAnnouncePacket]으로 생성 후 서명 포함.
+  Future<GroupSendResult> sendGroupTextMessage({
+    required Iterable<Contact> recipients,
+    required String text,
+    MessageSendMode mode = MessageSendMode.normal,
+  }) async {
+    try {
+      final settings = AppSettingsService().current;
+      if (!settings.userLevel.canSendMessages) {
+        return const GroupSendResult.blocked(
+          'Server mode only relays messages.',
+        );
+      }
+      final trimmedText = text.trim();
+      if (trimmedText.isEmpty) {
+        return const GroupSendResult.blocked('Message is empty.');
+      }
+      if (trimmedText.length > mode.maxLength) {
+        return const GroupSendResult.blocked('Message is too long.');
+      }
+
+      if (mode.isNotice) {
+        final sent = await _sendNoticeMessage(text: trimmedText, mode: mode);
+        return GroupSendResult(
+          attempted: sent ? 1 : 0,
+          sent: sent ? 1 : 0,
+          skipped: 0,
+          blockedReason: sent ? null : 'Notice could not be sent.',
+        );
+      }
+
+      final seenNodeIds = <String>{};
+      var attempted = 0;
+      var sent = 0;
+      var skipped = 0;
+
+      for (final contact in recipients) {
+        if (!seenNodeIds.add(_hex(contact.nodeId))) {
+          continue;
+        }
+        if (_bytesEqual(contact.nodeId, _identity.myNodeId) ||
+            !contact.userLevel.canSendMessages ||
+            contact.encryptionPublicKey == null) {
+          skipped++;
+          continue;
+        }
+
+        attempted++;
+        final ok = await _sendEncryptedTextPacket(
+          targetNodeId: contact.nodeId,
+          text: trimmedText,
+          mode: mode,
+        );
+        if (ok) {
+          sent++;
+        }
+      }
+
+      return GroupSendResult(
+        attempted: attempted,
+        sent: sent,
+        skipped: skipped,
+        blockedReason: sent == 0
+            ? 'No group recipients could be reached.'
+            : null,
+      );
+    } catch (e) {
+      _log('sendGroupTextMessage error: $e');
+      return GroupSendResult.blocked('Group send failed: $e');
+    }
+  }
+
   Future<bool> _sendSelfTextMessage({
     required String text,
     required MessageSendMode mode,
@@ -426,7 +520,11 @@ class MessagingService {
     var sentAny = false;
 
     for (final contact in contacts) {
-      if (contact.encryptionPublicKey == null) continue;
+      if (_bytesEqual(contact.nodeId, _identity.myNodeId) ||
+          !contact.userLevel.canSendMessages ||
+          contact.encryptionPublicKey == null) {
+        continue;
+      }
       final sent = await _sendEncryptedTextPacket(
         targetNodeId: contact.nodeId,
         text: text,
@@ -471,6 +569,49 @@ class MessagingService {
       isOutgoing: true,
     );
     return true;
+  }
+
+  Future<bool> sendLevelChangeRequest({
+    required Uint8List targetNodeId,
+    required UserLevel level,
+  }) async {
+    try {
+      final senderLevel = AppSettingsService().current.userLevel;
+      if (!senderLevel.canAssignContactLevels ||
+          !senderLevel.contactAssignableLevels.contains(level)) {
+        _log('LEVEL_CHANGE send blocked: unauthorized sender level.');
+        return false;
+      }
+      final payload = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'protocolVersion': MeshPacket.currentProtocolVersion,
+            'kind': 'level_change',
+            'level': level.wireName,
+          }),
+        ),
+      );
+      final packet = MeshPacket.create(
+        senderId: _identity.myNodeId,
+        targetId: targetNodeId,
+        msgType: MsgType.adminNotice,
+        payload: payload,
+        ttl: MeshPacket.defaultTtl,
+      );
+      packet.signature = await _crypto.sign(
+        packet.toSignableBytes(),
+        _identity.myPrivateKeySeed,
+      );
+      final recipientCount = await _broadcastPacketWithRetry(packet);
+      _log(
+        'LEVEL_CHANGE request target=${_hexShort(targetNodeId)} '
+        'level=${level.label} recipients=$recipientCount',
+      );
+      return recipientCount > 0;
+    } catch (e) {
+      _log('sendLevelChangeRequest error: $e');
+      return false;
+    }
   }
 
   Future<int> _broadcastPacketWithRetry(
@@ -606,8 +747,7 @@ class MessagingService {
       case MsgType.topologyResponse:
         await _handleTopologyResponsePacket(packet);
       case MsgType.adminNotice:
-        // Phase 3 구현 예정
-        _log('ADMIN_NOTICE 수신 (Phase 3 미구현): ${_hexShort(packet.msgId)}');
+        await _handleAdminNoticePacket(packet);
       case MsgType.ack:
         // Phase 2 구현 예정
         _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
@@ -628,7 +768,7 @@ class MessagingService {
     packet.ttl -= 1;
     packet.hopCount += 1;
 
-    final relayed = await _broadcastPacketWithRetry(
+    final relayed = await _broadcastRelayPacket(
       packet,
       excludeDeviceId: fromDeviceId,
     );
@@ -641,6 +781,22 @@ class MessagingService {
     }
   }
 
+  Future<int> _broadcastRelayPacket(
+    MeshPacket packet, {
+    String? excludeDeviceId,
+  }) async {
+    var recipientCount = 0;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      recipientCount = await _ble.broadcastPacket(
+        packet,
+        excludeDeviceId: excludeDeviceId,
+      );
+      if (recipientCount > 0) return recipientCount;
+      await Future<void>.delayed(Duration(milliseconds: 120 * (attempt + 1)));
+    }
+    return recipientCount;
+  }
+
   // ── TEXT 패킷 처리 ────────────────────────────────────────────────────────────
 
   /// TEXT 패킷을 복호화하여 Stream에 emit하고 DB에 저장한다.
@@ -651,6 +807,11 @@ class MessagingService {
         packet.isBroadcast || _bytesEqual(packet.targetId, myNodeId);
     if (!isForMe) {
       // 릴레이 전용 (복호화 불필요)
+      return;
+    }
+
+    if (!AppSettingsService().current.userLevel.canSendMessages) {
+      _log('TEXT display skipped: server level only relays messages.');
       return;
     }
 
@@ -791,7 +952,25 @@ class MessagingService {
 
   /// PING 패킷에 PONG으로 응답한다.
   Future<void> _handleTopologyRequestPacket(MeshPacket packet) async {
-    final request = TopologyRequest.fromPayload(packet.payload);
+    if (_bytesEqual(packet.senderId, _identity.myNodeId)) return;
+    final TopologyRequest request;
+    try {
+      request = TopologyRequest.fromPayload(packet.payload);
+    } catch (e) {
+      _log('TOPOLOGY_REQUEST parse failed: $e');
+      return;
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    _topologyRequestsHandledAt.removeWhere(
+      (_, handledAt) =>
+          nowMs - handledAt > const Duration(minutes: 5).inMilliseconds,
+    );
+    if (_topologyRequestsHandledAt.containsKey(request.requestId)) {
+      _log('TOPOLOGY_REQUEST duplicate ignored: ${request.requestId}');
+      return;
+    }
+    _topologyRequestsHandledAt[request.requestId] = nowMs;
+
     final contacts = await _topologyNeighborSummaries();
     final settings = AppSettingsService().current;
     final response = TopologyResponse(
@@ -805,7 +984,7 @@ class MessagingService {
         lastSeen: DateTime.now().millisecondsSinceEpoch,
       ),
       neighbors: contacts,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestamp: nowMs,
     );
     final responsePacket = MeshPacket.create(
       senderId: _identity.myNodeId,
@@ -827,7 +1006,18 @@ class MessagingService {
 
   Future<void> _handleTopologyResponsePacket(MeshPacket packet) async {
     if (!_bytesEqual(packet.targetId, _identity.myNodeId)) return;
-    final response = TopologyResponse.fromPayload(packet.payload);
+    final TopologyResponse response;
+    try {
+      response = TopologyResponse.fromPayload(packet.payload);
+    } catch (e) {
+      _log('TOPOLOGY_RESPONSE parse failed: $e');
+      return;
+    }
+    final ageMs = DateTime.now().millisecondsSinceEpoch - response.timestamp;
+    if (ageMs.abs() > const Duration(minutes: 2).inMilliseconds) {
+      _log('TOPOLOGY_RESPONSE ignored: stale response.');
+      return;
+    }
     if (!_topologyStreamController.isClosed) {
       _topologyStreamController.add(response);
     }
@@ -835,6 +1025,60 @@ class MessagingService {
       'TOPOLOGY_RESPONSE received responder=${_hexShort(response.responder.nodeId)} '
       'neighbors=${response.neighbors.length}',
     );
+  }
+
+  Future<void> _handleAdminNoticePacket(MeshPacket packet) async {
+    if (!_bytesEqual(packet.targetId, _identity.myNodeId)) {
+      _log('ADMIN_NOTICE relay-only: ${_hexShort(packet.msgId)}');
+      return;
+    }
+    final ageMs = DateTime.now().millisecondsSinceEpoch - packet.timestamp;
+    if (ageMs.abs() > const Duration(minutes: 10).inMilliseconds) {
+      _log('ADMIN_NOTICE ignored: stale timestamp.');
+      return;
+    }
+
+    final Map<String, dynamic> decoded;
+    try {
+      final raw = jsonDecode(utf8.decode(packet.payload));
+      if (raw is! Map<String, dynamic>) {
+        throw const FormatException('Invalid admin notice payload.');
+      }
+      decoded = raw;
+    } catch (e) {
+      _log('ADMIN_NOTICE parse failed: $e');
+      return;
+    }
+
+    if (decoded['protocolVersion'] != MeshPacket.currentProtocolVersion ||
+        decoded['kind'] != 'level_change') {
+      _log('ADMIN_NOTICE ignored: unsupported payload.');
+      return;
+    }
+
+    final requestedLevel = UserLevel.fromWire(decoded['level'] as String?);
+    if (requestedLevel == UserLevel.server) {
+      _log('LEVEL_CHANGE ignored: user/server mode is self-selected.');
+      return;
+    }
+
+    final sender = await _contacts.getContact(packet.senderId);
+    if (sender == null ||
+        !sender.isTrusted ||
+        !sender.userLevel.canChangeContactLevel(
+          AppSettingsService().current.userLevel,
+        ) ||
+        !sender.userLevel.contactAssignableLevels.contains(requestedLevel)) {
+      _log('LEVEL_CHANGE ignored: unauthorized sender.');
+      return;
+    }
+
+    final settingsService = AppSettingsService();
+    final current = settingsService.current;
+    if (current.userLevel == requestedLevel) return;
+    await settingsService.save(current.copyWith(userLevel: requestedLevel));
+    await broadcastKeyAnnounce();
+    _log('LEVEL_CHANGE applied: ${requestedLevel.label}');
   }
 
   Future<List<TopologyNodeSummary>> _topologyNeighborSummaries() async {
@@ -976,6 +1220,7 @@ class MessagingService {
     _cleanSeenTimer = null;
     _diagnosticMessageTimer?.cancel();
     _diagnosticMessageTimer = null;
+    _topologyRequestsHandledAt.clear();
     _ble.stopHeartbeat();
 
     if (!_messageStreamController.isClosed) {
@@ -1020,6 +1265,9 @@ class MessagingService {
   }
 
   _DecodedTextPayload _decodeTextPayload(Uint8List payload) {
+    if (payload.length > MessagePolicy.maxTextPayloadBytes) {
+      throw FormatException('Text payload too large: ${payload.length}');
+    }
     final raw = utf8.decode(payload);
     try {
       final decoded = jsonDecode(raw);

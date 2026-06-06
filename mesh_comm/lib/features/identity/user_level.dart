@@ -82,6 +82,7 @@ enum UserLevel {
         UserLevel.user,
         UserLevel.admin,
         UserLevel.builder,
+        UserLevel.creator,
       ],
       UserLevel.builder => const [UserLevel.user, UserLevel.admin],
       UserLevel.admin => const [UserLevel.user],

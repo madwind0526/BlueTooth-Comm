@@ -483,6 +483,358 @@
 
 <!-- ================================================================ -->
 
+<!-- ================================================================ -->
+## 2026-06-06 — 4-에이전트 전체 코드베이스 병렬 리뷰
+
+> **리뷰 시점:** v1.0.L / 20260606-034232 — 19개 테스트 통과, 실기기 검증 완료 후  
+> **리뷰 방법:** 4개 독립 에이전트 병렬 분석 (보안/암호화 · BLE/메시징 · 데이터/정책 · UI/구조)  
+> **전체 평가:** 🟠 주의 — Critical 12건 포함, 프로덕션 배포 전 수정 필수
+
+### 결과 요약
+
+| 에이전트 | Critical | High | Medium | Low |
+|---------|----------|------|--------|-----|
+| 보안/암호화 | 3 | 5 | 5 | 3 |
+| BLE/메시징 | 3 | 5 | 6 | 4 |
+| 데이터/정책 | 2 | 3 | 3 | 2 |
+| UI/구조 | 4 | 6 | 7 | 3 |
+| **합계** | **12** | **19** | **21** | **12** |
+
+---
+
+### 🔴 CRITICAL — 즉시 수정 필요
+
+#### [보안] SC-1. 개인키 평문 SQLite 저장 (반복 지적)
+- **파일:** `identity_service.dart:66-73`
+- **문제:** Ed25519/X25519 개인키 seed가 DB에 암호화 없이 저장. "Phase 2 개선" TODO 존재하나 프로덕션 전 필수.
+- **위험:** 기기 탈취 → ADB/루팅으로 DB 추출 → 모든 통신 복호화 및 노드 위장
+- **해결:** Android Keystore / iOS Keychain 연동 (`flutter_secure_storage`)
+
+#### [보안] SC-2. PBKDF2 반복 횟수 부족
+- **파일:** `identity_backup_service.dart:21` (`_kdfIterations = 210000`)
+- **문제:** NIST 2024 기준 최소 600,000회 권장. 현재 210,000회는 GPU 브루트포스에 취약.
+- **해결:** `_kdfIterations = 600000` 이상으로 변경
+
+#### [보안] SC-3. AES-GCM 논스 재사용 위험 (장기 운영 시)
+- **파일:** `crypto_service.dart:140-158`
+- **문제:** 동일 X25519 공유 비밀에 12바이트 랜덤 논스 → 생일 역설으로 2^48 메시지 후 충돌 가능
+- **해결:** HKDF로 메시지마다 고유 키 파생 또는 X25519 임시 키쌍 주기적 교체
+
+#### [보안] SC-4. ECDH 공유 비밀에 KDF 미적용
+- **파일:** `crypto_service.dart:113-132`
+- **문제:** X25519 Raw 출력을 직접 AES-GCM 키로 사용. RFC 7748 및 NIST 지침 위반.
+- **해결:** HKDF-SHA256 적용 후 파생 키 사용
+
+#### [데이터] SC-5. `setUserLevel()` 인증 체크 없음 (권한 탈취)
+- **파일:** `contact_service.dart:390-392`
+- **문제:** 호출자 레벨 검증 없음. `UserLevel.canChangeContactLevel()`이 정의됐으나 미호출.
+- **위험:** 일반 User가 코드 직접 호출 시 Creator 레벨 부여 가능
+- **해결:** 진입부에 `AppSettingsService().current.userLevel.canChangeContactLevel(level)` 추가
+
+#### [데이터] SC-6. JSON 임포트로 권한 탈취
+- **파일:** `contact_file_service.dart:70-72`
+- **문제:** 임포트 JSON의 `userLevel` 필드를 검증 없이 DB 저장. 조작된 파일로 임의 연락처에 Creator 부여.
+- **해결:** 임포트 시 `user`/`server`만 허용; 그 외는 `user`로 강제 지정
+
+#### [BLE] SC-7. 프래그먼트 재조립 결함 (데이터 손상)
+- **파일:** `ble_fragment_codec.dart:116`
+- **문제:** 완성 여부를 `map.length == count`로만 판별. 인덱스 {0,2,3}처럼 중간 조각 누락해도 통과 → 손상 패킷 반환
+- **해결:** 인덱스 0~count-1 모두 존재하는지 명시적 검증
+
+#### [BLE] SC-8. 무제한 텍스트 페이로드 DoS
+- **파일:** `messaging_service.dart:1123-1162`
+- **문제:** `_decodeTextPayload()`에 길이 제한 없음. 악성 노드가 수 MB 페이로드 전송 시 메모리/CPU 소진
+- **해결:** 디코딩 전 최대 크기(예: 64KB) 검증 후 드롭
+
+#### [BLE] SC-9. Timer async 패턴 오류 (하트비트)
+- **파일:** `ble_service.dart:706-707`
+- **문제:** `Timer.periodic` 콜백에서 async 함수를 await 없이 호출 → 완료 안 된 Future 누적, 하트비트 실패 및 메모리 릭
+- **해결:** `while` + `await` 패턴으로 재설계
+
+#### [UI] SC-10. dispose 후 setState (스캔 타이머)
+- **파일:** `home_screen.dart:335-337`
+- **문제:** `Future.delayed` 콜백이 10초 후 실행 시 위젯이 이미 dispose됐을 수 있음
+- **해결:** dispose 시 타이머 취소 또는 `_isScanning` 플래그로 콜백 무효화
+
+#### [UI] SC-11. PostFrame 콜백 취소 불가 (크래시 위험)
+- **파일:** `chat_screen.dart:88-104`
+- **문제:** `addPostFrameCallback`은 취소 불가. 위젯 dispose 후 콜백 실행 시 크래시
+- **해결:** 콜백 내 `if (!mounted) return` 가드 강화
+
+#### [UI] SC-12. QR 스캔 — 검증 전 `_scanned = true` 설정
+- **파일:** `qr_screen.dart:243-266`
+- **문제:** 검증 실패해도 `_scanned = true`가 유지되어 스캐너 잠김
+- **해결:** 검증 성공 후에 `_scanned = true` 설정
+
+---
+
+### 🟠 HIGH — 빠른 수정 권장 (19건)
+
+#### [보안] SH-1. ECDH 공유 비밀 KDF 미적용
+- **파일:** `crypto_service.dart:113-132`
+- **문제:** X25519 Raw 출력을 직접 AES-GCM 키로 사용. RFC 7748 및 NIST 지침 위반.
+- **해결:** `Hkdf(macAlgorithm: Hmac.sha256())`로 파생 키 생성 후 사용
+
+#### [보안] SH-2. 솔트 길이 16바이트 — 32바이트 권장
+- **파일:** `identity_backup_service.dart:230-235`
+- **문제:** PBKDF2 솔트가 16바이트(128비트). 키 크기(256비트)와 불일치, 현대 위협 모델에 부족.
+- **해결:** `_randomBytes(32)`로 변경
+
+#### [보안] SH-3. 릴레이 노드의 unsigned 필드 변조 가능 (문서화 부족)
+- **파일:** `mesh_packet.dart:285-289` 및 `messaging_service.dart:667-670`
+- **문제:** `toSignableBytes()`가 TTL/hopCount를 제외하는 설계는 올바르나, 이 외 필드(timestamp 등)가 서명 범위임을 문서화하지 않음. 릴레이 노드가 timestamp를 조작해도 검출 어려움.
+- **해결:** `toSignableBytes()` 주석에 "mutable: ttl, hopCount only" 명시; 향후 릴레이 서명 체인 고려
+
+#### [보안] SH-4. 서명 검증 선행 의존 — 컴파일 타임 강제 불가
+- **파일:** `identity_service.dart:328-330`
+- **문제:** `parseKeyAnnouncePacket()` 주석에 "호출자가 먼저 검증해야 함"이라고 명시했으나 런타임 체크 없음. 호출자 누락 시 미검증 패킷 처리.
+- **해결:** 메서드를 `parseAndVerifyKeyAnnouncePacket()`으로 통합하거나 진입부에 assertion 추가
+
+#### [보안] SH-5. 고정 probe 문자열로 키쌍 검증
+- **파일:** `identity_backup_service.dart:147-160`
+- **문제:** 복원 시 `'mesh_comm_identity_probe'` 고정 문자열로 서명 검증. 관찰된 (probe, signature) 쌍 재사용 가능.
+- **해결:** `final nonce = Random.secure().nextInt(0xffffffff); final probe = utf8.encode('probe|$nonce');`
+
+#### [BLE] SH-6. 스캔 타이머 무한 재귀 등록
+- **파일:** `ble_service.dart:235-239`
+- **문제:** 스캔 타임아웃 후 `startScan()`이 내부에서 다시 `startScan()`을 예약 → 타이머가 해제되지 않고 누적
+- **해결:** `Timer.periodic` 단일 인스턴스로 교체 또는 재귀 호출 전 기존 타이머 명시 취소
+
+#### [BLE] SH-7. 송신 큐 정리 레이스 조건
+- **파일:** `ble_service.dart:268-279`
+- **문제:** `sendPacket()`에서 `identical()` 비교 실패 시 이전 Future 참조가 `_sendQueues`에 영구 잔존 → 큐 메모리 릭
+- **해결:** 고유 ID 기반 큐 관리 또는 `_sendQueues[deviceId] = null` 명시적 해제
+
+#### [BLE] SH-8. notify 스트림 재연결 시 중복 구독
+- **파일:** `ble_service.dart:513-519`
+- **문제:** `messageChar.lastValueStream.listen()`의 `onError` 콜백은 있으나, 재연결 레이스 시 이전 구독이 `_notificationSubscriptions`에 남아 중복 리스너 등록 가능
+- **해결:** `_onDeviceDisconnected()`에서 구독 취소 순서 보장; 재연결 전 기존 구독 완전 정리
+
+#### [BLE] SH-9. `_cleanExpired()` 동시성 보호 없음
+- **파일:** `ble_fragment_codec.dart:134-141`
+- **문제:** `add()` 호출마다 `_cleanExpired()`가 실행되는데 동기화 없음. 복수 스레드에서 동시 호출 시 `removeWhere()` 중 이터레이터 오염 또는 조각 손실 가능.
+- **해결:** 단일 스레드 가정을 주석으로 문서화하거나 Mutex 추가
+
+#### [BLE] SH-10. hopCount 255 초과 패킷이 드롭 전 핸들러 실행
+- **파일:** `messaging_service.dart:596-683`
+- **문제:** TTL/hop 초과 체크가 타입별 핸들러 실행 후에 위치. hopCount=255 패킷도 TEXT/TOPOLOGY 핸들러를 거친 뒤 드롭됨 → 불필요한 DB 쓰기 등 사이드 이펙트 발생.
+- **해결:** hop 검증을 파이프라인 최상단(서명 검증 이전 또는 직후)으로 이동
+
+#### [BLE] SH-11. 중복 검사가 서명 검증보다 선행
+- **파일:** `messaging_service.dart:606-609`
+- **문제:** `isMessageSeen()` 호출 후 서명 검증. 위조 패킷이 동일 msg_id로 전송되면 정상 패킷이 "이미 처리됨"으로 차단 가능 (DoS 벡터)
+- **해결:** 서명 검증 성공 후에 `markMessageSeen()` 호출
+
+#### [데이터] SH-12. 공지 쿨다운 AppSettings 타임스탬프 의존 — 우회 가능
+- **파일:** `message_policy.dart`, `messaging_service.dart:348-360`
+- **문제:** 쿨다운 시행이 `AppSettings.lastShortNoticeAt` 타임스탬프에만 의존. DB 직접 조작으로 타임스탬프를 0으로 설정 시 모든 쿨다운 우회 가능.
+- **해결:** 서버 측 검증(릴레이 노드가 타임스탬프 검증) 또는 쿨다운 정책 버전 함께 저장
+
+#### [데이터] SH-13. Settings 로드 시 userLevel 검증 없음
+- **파일:** `app_settings_service.dart:19-24`
+- **문제:** `AppSettings.fromMap()`에서 로드된 `userLevel` 검증 없음. SQLite 직접 조작으로 `user_level = 'creator'` 설정 시 앱 시작부터 Creator 권한 획득.
+- **해결:** 로드 후 초기 레벨 이하인지 검증; Windows는 Creator 강제이므로 Android에만 적용
+
+#### [데이터] SH-14. 공개키 변경 시 신뢰 플래그 재평가 불완전
+- **파일:** `contact_service.dart:249-287`
+- **문제:** `checkPublicKeyChange()`에서 `trusted: false`로 재설정하지만, 이후 `addOrUpdateContact()` 호출 시 기존 `is_trusted` 값을 재사용. 키 변경 후 재연결 시 신뢰 플래그가 복원될 수 있음.
+- **해결:** `addOrUpdateContact()` 내부에서 공개키 불일치 시 `trusted = false` 강제
+
+#### [UI] SH-15. 연락처 스트림 급속 갱신 시 `setState` 레이스
+- **파일:** `home_screen.dart:147-149`
+- **문제:** `initState()`의 연락처 구독에서 `if (mounted) setState(...)` 가드가 있으나, dispose 진행 중 스트림이 빠르게 여러 이벤트를 방출하면 가드 통과 후 dispose 완료될 수 있음
+- **해결:** `addPostFrameCallback` 사용 또는 dispose 시 구독 즉시 취소 순서 보장
+
+#### [UI] SH-16. 노드ID 바이트 비교 인라인 구현 — 비효율 및 버그 유발
+- **파일:** `chat_screen.dart:150-176`
+- **문제:** `.where()` 안에서 `List.generate(...).every(...)` 패턴으로 바이트 비교. 가독성 저하, 실수 유발 가능, `listEquals` 대비 비효율.
+- **해결:** `_bytesEqual(a, b)` 공용 유틸 사용; nodeId 비교는 hex 문자열 비교로 통일 권장
+
+#### [UI] SH-17. BLE 토글 실패 시 UI 상태 불일치
+- **파일:** `home_screen.dart:277-288`
+- **문제:** `_toggleBluetooth()`에서 `startScan()`/`stopScan()` 예외 미처리. 실패해도 `_bluetoothEnabled` 상태가 변경되어 UI와 실제 BLE 상태 불일치.
+- **해결:** try-catch로 감싸고 실패 시 `_bluetoothEnabled` 원복
+
+#### [UI] SH-18. async 연산 후 `Navigator.push` 전 mounted 체크 누락
+- **파일:** `home_screen.dart:386-406`
+- **문제:** `markMessagesReadForContact()` → `_loadUnreadCounts()` → `Navigator.push()` 체인에서 마지막 push 직전 mounted 체크 없음. 중간 await 중 dispose 시 크래시.
+- **해결:** `Navigator.push()` 직전 `if (!mounted) return;` 추가
+
+#### [UI] SH-19. 이미지 로드 에러 묵살
+- **파일:** `avatar_registry.dart:129-145`
+- **문제:** `errorBuilder`가 폴백 CircleAvatar를 반환하지만 에러를 로깅하지 않음. 아바타 에셋 누락 시 사용자/개발자 모두 인지 불가.
+- **해결:** 디버그 빌드에서 `debugPrint('[Avatar] load error: $error')` 추가
+
+---
+
+### 🟡 MEDIUM — 계획적 개선 (21건)
+
+#### [보안] SM-1. `catch (_) { rethrow }` 에러 로깅 없음
+- **파일:** `crypto_service.dart:78-85` (및 42-44, 129-131)
+- **문제:** 여러 함수에서 `catch (_) { rethrow }` 패턴 사용. 예외 종류·원인 추적 불가, 디버깅 어려움.
+- **해결:** `debugPrint('[CryptoService] error: $e'); rethrow;`로 교체
+
+#### [보안] SM-2. 백업 버전·반복횟수 정확 일치 요구 — 하위 호환 불가
+- **파일:** `identity_backup_service.dart:81-90`
+- **문제:** 버전·KDF·반복횟수가 정확히 일치해야만 복원 가능. 보안 기준 업그레이드 후 생성된 새 백업을 이전 앱이 복원 불가.
+- **해결:** 버전은 `>=` 허용, 반복횟수는 `>=` 허용 (더 강한 설정 수용)
+
+#### [보안] SM-3. 암호화 키 크기 검증 없음
+- **파일:** `messaging_service.dart:264-267`, `389-392`, `725-728`
+- **문제:** `computeSharedSecret()` 반환값을 크기 검증 없이 `encrypt()`에 전달. X25519 구현이 32바이트를 보장하지만 방어적 코딩 부재.
+- **해결:** `encrypt()`/`decrypt()` 진입부에 `assert(sharedSecret.length == 32)` 추가
+
+#### [보안] SM-4. 패킷 파싱 시 타임스탬프 합리성 검증 없음
+- **파일:** `mesh_packet.dart:214-254`
+- **문제:** `fromBytes()`에서 타임스탬프 범위 검증 없음. 미래 or 매우 과거 타임스탬프를 가진 패킷도 수락.
+- **해결:** 메시징 레이어에서 `|now - packet.timestamp| > 300s` 이면 드롭
+
+#### [보안] SM-5. PBKDF2 API의 `nonce:` 파라미터에 솔트 전달 — 의미 혼동
+- **파일:** `identity_backup_service.dart:178-181`
+- **문제:** `pbkdf2.deriveKey(nonce: salt)` — 파라미터명이 `nonce`이지만 실제로는 솔트. 코드 가독성 저하, 향후 API 변경 시 혼동 위험.
+- **해결:** 주석 `// cryptography 패키지에서 PBKDF2 솔트를 nonce로 표기함` 추가
+
+#### [BLE] SM-6. 스캔 타이머 재할당 전 이전 타이머 취소 누락
+- **파일:** `ble_service.dart:230-239`
+- **문제:** `_scanTimer = Timer(...)` 재할당 전 `_scanTimer?.cancel()` 없음. `startScan()` 빠르게 연속 호출 시 고아 타이머 누적.
+- **해결:** 할당 직전 `_scanTimer?.cancel();` 추가
+
+#### [BLE] SM-7. `License.nonprofit` 하드코딩
+- **파일:** `ble_service.dart:472`
+- **문제:** `device.connect(license: License.nonprofit)` 상용 배포 시 부적절. 설정 파일이나 빌드 플래그로 분리 필요.
+- **해결:** `BleConstants`에 라이선스 상수 추가 또는 빌드 플래버별 설정
+
+#### [BLE] SM-8. 빈 페이로드 프래그먼트 허용
+- **파일:** `ble_fragment_codec.dart:59-76`
+- **문제:** `parse()`가 빈 payload를 가진 프래그먼트를 수락. 재조립 시 빈 청크 연결로 패킷 손상.
+- **해결:** `payload.isEmpty && totalCount > 1` 이면 파싱 거부
+
+#### [BLE] SM-9. TTL 등록을 읽기 전용 함수 내에서 수행
+- **파일:** `messaging_service.dart:1058-1062`
+- **문제:** `getMessageHistory()`(읽기 의도) 내부에서 `setMessageExpiresAtIfNull()` 쓰기 수행. 다중 소비자 동시 호출 시 레이스 가능.
+- **해결:** TTL 등록을 메시지 수신 핸들러로 이동; 읽기 함수는 순수 읽기로 유지
+
+#### [BLE] SM-10. BFS 사이클 처리 문서화 부족
+- **파일:** `topology_graph.dart:99`
+- **문제:** visited 집합으로 사이클을 방지하고 있으나 코드 주석 없음. maxNodes=80 도달 시 그래프가 절단됨도 명시 안 됨.
+- **해결:** `// 사이클 방지: visited 집합; maxNodes 초과 시 BFS 중단` 주석 추가
+
+#### [BLE] SM-11. BFS TTL 체크 시작 시점 최적화
+- **파일:** `virtual_mesh_simulator.dart:345-354`
+- **문제:** `_shortestRoute()`에서 ttl=0이면 BFS가 이웃 탐색 후 조건 실패로 종료. 시작 시점에 `if (ttl < 1) return null;` 조기 탈출이 없음.
+- **해결:** BFS 루프 진입 전 `if (ttl < 1) return null;` 추가
+
+#### [데이터] SM-12. `upsertContact` GET→INSERT 레이스 조건
+- **파일:** `database_service.dart:245-270`
+- **문제:** `getContact(nodeId)` 후 `INSERT` 사이 다른 코드가 동일 연락처를 수정하면 `first_seen` 손실 등 데이터 불일치 발생.
+- **해결:** `first_seen`만 별도 서브쿼리로 인라인 조회: `COALESCE((SELECT first_seen FROM contacts WHERE node_id=?), ?)`
+
+#### [데이터] SM-13. 키 변경 시 `userLevel` 명시 보존 누락
+- **파일:** `contact_service.dart:249-287`
+- **문제:** `checkPublicKeyChange()` 내 `upsertContact()` 호출에서 `userLevel` 파라미터 미전달. 기본값 `'user'`로 리셋될 수 있음.
+- **해결:** `userLevel: row['user_level'] as String? ?? 'user'` 명시 전달
+
+#### [데이터] SM-14. `scanDefaultDepth` 상한선 없음
+- **파일:** `app_settings.dart:83`
+- **문제:** 음수만 체크하고 상한 없음. `depth=999999` 입력 시 토폴로지 BFS가 maxNodes 한계까지 폭주.
+- **해결:** `depth < 0 || depth > 20 ? 3 : depth` 또는 `BleConstants.maxScanDepth` 상수로 관리
+
+#### [UI] SM-15. 툴팁 한글 인코딩 깨짐
+- **파일:** `home_screen.dart:1906`
+- **문제:** `'$label 吏???덉젙'` — 한글 소스 파일 인코딩 오류. 툴팁이 의미 없는 문자 표시.
+- **해결:** 해당 문자열을 올바른 한글로 수정
+
+#### [UI] SM-16. 이름·그룹 입력 빈 문자열 검증 없음
+- **파일:** `home_screen.dart:461-466`
+- **문제:** `_askForText()`가 빈 문자열을 반환해도 DB에 저장. 연락처 이름이 빈 문자열이 되면 목록에서 구분 불가.
+- **해결:** `if (result.trim().isEmpty) return;` 가드 추가
+
+#### [UI] SM-17. QR 스캔에서 `_scanned = true` 설정 순서 오류
+- **파일:** `qr_screen.dart:243-266`
+- **문제:** 검증 전에 `_scanned = true` 설정. 검증 실패 후 `_resetScanner()`를 호출해도 race 조건에서 스캐너 잠금 상태 유지 가능.
+- **해결:** 검증 성공 확인 후 `_scanned = true` 설정
+
+#### [UI] SM-18. 빠른 메시지 수신 시 `_loadHistory` 중복 호출로 목록 불일치
+- **파일:** `chat_screen.dart:127-148`
+- **문제:** `replace=true`로 전체 재로드 방식. 여러 메시지가 빠르게 수신되면 목록이 깜빡이거나 순서 불일치 가능.
+- **해결:** 신규 메시지만 append하는 방식으로 변경 또는 디바운스(100ms) 적용
+
+#### [UI] SM-19. 설정 다이얼로그 토글 즉시 저장 — 디바운스 없음
+- **파일:** `home_screen.dart:545-567`
+- **문제:** 다크모드·데모모드 토글 시 즉시 저장. 사용자가 빠르게 토글하면 불필요한 DB 쓰기 다수 발생.
+- **해결:** "저장" 버튼 도입 또는 300ms 디바운스
+
+#### [UI] SM-20. QR 초기화 실패 시 무한 로딩
+- **파일:** `qr_screen.dart:87-91`
+- **문제:** `identity.isInitialized` 체크 후 false이면 `CircularProgressIndicator` 표시. 초기화가 영구 실패해도 에러 UI 없이 로딩 지속.
+- **해결:** 타임아웃(예: 10초) 후 에러 상태 표시
+
+#### [데이터] SM-21. 중복 DELETE 쿼리 — `NOT IN` 비효율
+- **파일:** `database_service.dart:640-648`
+- **문제:** TTL 삭제 후 상위 10,000건 유지를 위한 두 번째 `NOT IN (SELECT ... LIMIT 10000)`가 BLOB 키 anti-join으로 full scan. 테이블이 크면 성능 저하.
+- **해결:** `NOT IN (SELECT rowid FROM seen_messages ORDER BY seen_at DESC LIMIT 10000)` — rowid 기반으로 교체
+
+---
+
+### 🟢 LOW — 참고 (12건)
+
+| # | 영역 | 파일 | 설명 | 해결 |
+|---|------|------|------|------|
+| SL-1 | 보안 | `crypto_service.dart:42-44` | `catch (_) { rethrow }` 3곳 — 에러 로깅 없어 디버깅 어려움 | `debugPrint` 추가 |
+| SL-2 | 보안 | `identity_service.dart:387-393` | `_fromHex()` 유효 hex 문자 사전 검증 없음 — 비hex 문자 입력 시 불명확한 예외 | `RegExp(r'^[0-9a-fA-F]*$')` 검증 추가 |
+| SL-3 | 보안 | `mesh_packet.dart:277-283` | `isBroadcast` O(16) 루프 — 반복 호출 시 비효율 | `targetId.every((b) => b == 0xFF)` 또는 생성자에서 캐시 |
+| SL-4 | BLE | `ble_service.dart:793-796` | `_log()`가 `print()` 사용 — 프로덕션 로거 미연동 | 로깅 프레임워크 연동 또는 `kDebugMode` 가드 |
+| SL-5 | BLE | `messaging_service.dart:1217-1223` | `_bytesEqual()` 비상수 시간 비교 — 보안 중요 경로에서는 constant-time 권장 | `listEquals()` 사용 또는 보안 경로 분리 |
+| SL-6 | BLE | `topology_message.dart:161-170` | `_hexToBytes()` 대소문자 정규화 없음 — 노드ID 불일치 엣지 케이스 가능 | 입력을 `toLowerCase()` 정규화 |
+| SL-7 | BLE | `messaging_service.dart:1170-1177` | 토폴로지 깊이 제한 3이 하드코딩 | `BleConstants.userMaxScanDepth` 상수로 이동 |
+| SL-8 | 데이터 | `contact_file_service.dart:42-48` | 임포트 시 `nodeId == SHA-256(publicKey)[0:16]` 검증 없음 — 불일치 쌍 저장 가능 | `CryptoService().nodeIdFromPublicKey(publicKey)` 비교 추가 |
+| SL-9 | 데이터 | `database_service.dart:656` | `Map.of(row)` 불필요한 복사 — 주석에 "이미 Uint8List" 명시돼 있으나 실제 목적 불분명 | 제거 또는 목적 주석 명시 |
+| SL-10 | UI | `home_screen.dart:534-540` | `_bytesEqual()` 로컬 정의 중복 — 6개 파일에 같은 구현 | 공용 `utils.dart`로 추출 |
+| SL-11 | UI | `home_screen.dart:2295-2300` | PC/Phone 아이콘 색상 `Colors.lightBlueAccent` 하드코딩 — 다크/라이트 테마 무시 | `Theme.of(context).colorScheme` 사용 |
+| SL-12 | UI | `diagnostic_config.dart:28-44` | `targetNodeId` 미설정 여부를 빈 문자열로 판별 — `isEmpty` 체크가 fragile | `const bool.hasEnvironment()` 또는 nullable 타입으로 변경 |
+
+---
+
+### ✅ 잘 된 점
+
+| 영역 | 내용 |
+|------|------|
+| 암호화 | SHA-256 순수 Dart 구현 FIPS 180-4 준수 |
+| 암호화 | `verify()` 예외 대신 bool 반환 — 타이밍 공격 방지 |
+| 암호화 | nodeId = SHA-256(publicKey) QR 검증 |
+| 암호화 | 수신 파이프라인에서 서명 검증 선행 (DoS 방지) |
+| BLE | `dispose()`가 타이머·구독·연결 모두 정리 |
+| BLE | hopCount 증가 + TTL 감소 시 원본 서명 유지 |
+| BLE | 토폴로지 BFS maxNodes=80 제한으로 폭주 방지 |
+| UI | `PopScope`로 Android 뒤로가기 처리 |
+| UI | 미신뢰 연락처 경고 배너 명확 표시 |
+| 데이터 | 모든 WHERE 절 파라미터 바인딩 — SQL 인젝션 없음 |
+| 데이터 | `UserLevel.canChangeContactLevel()` 설계 자체는 올바름 |
+| 데이터 | `Contact.fromMap()` null-coalescing 안전 역직렬화 |
+
+---
+
+### 📋 수정 우선순위
+
+**Phase A — 이번 Wave (즉시)**
+1. **SC-5, SC-6** — 권한 탈취 벡터 차단 (`setUserLevel` 인증 + JSON 임포트 레벨 제한)
+2. **SC-7** — 프래그먼트 인덱스 완전성 검증
+3. **SC-8** — 페이로드 길이 제한
+4. **SM-5** — 툴팁 한글 인코딩 수정
+5. **SM-6** — 이름 입력 빈 문자열 방어
+
+**Phase B — 다음 Wave**
+1. **SC-2** — PBKDF2 반복 횟수 600,000으로 증가
+2. **SC-3, SC-4** — HKDF 키 파생 적용
+3. **SH-4** — 스캔 타이머 재귀 제거
+4. **SH-5, SH-6** — 패킷 수신 파이프라인 순서 수정
+
+**Phase C — 프로덕션 전 필수**
+1. **SC-1** — 개인키 플랫폼 키스토어 이전
+2. **SH-2** — Settings 로드 시 userLevel 검증
+
+<!-- ================================================================ -->
+
 <!-- 다음 리뷰는 아래 형식으로 추가하세요:
 
 ## YYYY-MM-DD — [리뷰 이유/시점]

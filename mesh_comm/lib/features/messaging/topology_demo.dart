@@ -15,6 +15,36 @@ class DemoTopologyScenario {
     required this.responses,
   });
 
+  List<Contact> allContacts() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final nodesById = <String, TopologyNodeSummary>{};
+
+    void addNode(TopologyNodeSummary node) {
+      nodesById[_hex(node.nodeId)] = node;
+    }
+
+    for (final contact in directContacts) {
+      addNode(TopologyNodeSummary.fromContact(contact));
+    }
+    for (final response in responses) {
+      addNode(response.responder);
+      for (final neighbor in response.neighbors) {
+        addNode(neighbor);
+      }
+    }
+
+    final contacts = nodesById.values
+        .map(
+          (node) =>
+              _contact(node, now, saved: true, groupName: _demoGroupName(node)),
+        )
+        .toList();
+    contacts.sort((left, right) {
+      return (left.displayName ?? '').compareTo(right.displayName ?? '');
+    });
+    return contacts;
+  }
+
   factory DemoTopologyScenario.large() {
     final now = DateTime.now().millisecondsSinceEpoch;
     final nodes = {
@@ -150,7 +180,12 @@ TopologyNodeSummary _via(
   );
 }
 
-Contact _contact(TopologyNodeSummary node, int now, {required bool saved}) {
+Contact _contact(
+  TopologyNodeSummary node,
+  int now, {
+  required bool saved,
+  String? groupName,
+}) {
   return Contact(
     nodeId: node.nodeId,
     publicKey: Uint8List.fromList(List.filled(32, node.nodeId.first)),
@@ -163,6 +198,7 @@ Contact _contact(TopologyNodeSummary node, int now, {required bool saved}) {
     deviceType: node.deviceType,
     isSaved: saved,
     userLevel: node.userLevel,
+    groupName: groupName,
   );
 }
 
@@ -179,3 +215,17 @@ TopologyResponse _response(
     timestamp: now,
   );
 }
+
+String _demoGroupName(TopologyNodeSummary node) {
+  if (node.userLevel == UserLevel.server) return 'Relay';
+  if (node.userLevel == UserLevel.creator ||
+      node.userLevel == UserLevel.builder ||
+      node.userLevel == UserLevel.admin) {
+    return 'Operators';
+  }
+  if (node.deviceType == MeshDeviceType.pc) return 'Command';
+  return node.nodeId.first.isEven ? 'Field A' : 'Field B';
+}
+
+String _hex(Uint8List bytes) =>
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();

@@ -66,12 +66,14 @@ class BleFragmentCodec {
     if (count < 1 || count > BleConstants.maxFragmentCount || index >= count) {
       return null;
     }
+    final payload = Uint8List.fromList(bytes.sublist(headerSize));
+    if (count > 1 && payload.isEmpty) return null;
 
     return BleFragmentFrame(
       transferId: data.getUint32(4, Endian.big),
       index: index,
       count: count,
-      payload: Uint8List.fromList(bytes.sublist(headerSize)),
+      payload: payload,
     );
   }
 }

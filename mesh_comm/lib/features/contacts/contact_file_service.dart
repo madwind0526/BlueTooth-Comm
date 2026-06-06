@@ -54,6 +54,7 @@ class ContactFileService {
       final favorite = item['isFavorite'] as bool? ?? false;
       final trusted = item['isTrusted'] as bool? ?? false;
       final deviceType = MeshDeviceType.fromWire(item['deviceType'] as String?);
+      final userLevel = _safeImportedUserLevel(item['userLevel']);
 
       await _db.upsertContact(
         nodeId,
@@ -67,9 +68,7 @@ class ContactFileService {
         deviceType: deviceType.wireName,
         avatarKey: _cleanText(item['avatarKey'] as String?),
         savedContact: true,
-        userLevel: UserLevel.fromWire(
-          item['userLevel'] as String?,
-        ).wireName,
+        userLevel: userLevel.wireName,
       );
       imported++;
     }
@@ -114,5 +113,10 @@ class ContactFileService {
   String? _cleanText(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  UserLevel _safeImportedUserLevel(Object? value) {
+    final level = UserLevel.fromWire(value is String ? value : null);
+    return level == UserLevel.server ? UserLevel.server : UserLevel.user;
   }
 }

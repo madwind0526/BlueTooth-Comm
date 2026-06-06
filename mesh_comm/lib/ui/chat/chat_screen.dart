@@ -74,6 +74,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final FocusNode _keyboardFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   bool _isSending = false;
+  bool _chatBlocked = false;
   MessageSendMode _messageMode = MessageSendMode.normal;
   Timer? _historyRefreshTimer;
 
@@ -86,7 +87,7 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     if (!AppSettingsService().current.userLevel.canSendMessages ||
         !widget.contact.userLevel.canSendMessages) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         final message = !AppSettingsService().current.userLevel.canSendMessages
             ? 'Server mode only relays messages. Chat is disabled.'
@@ -94,7 +95,10 @@ class _ChatScreenState extends State<ChatScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
-        Navigator.of(context).maybePop();
+        final popped = await Navigator.of(context).maybePop();
+        if (!popped && mounted) {
+          setState(() => _chatBlocked = true);
+        }
       });
       return;
     }
@@ -273,6 +277,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_chatBlocked) {
+      return Scaffold(
+        backgroundColor: _bgColor,
+        appBar: _buildAppBar(),
+        body: const Center(
+          child: Text(
+            'Chat is disabled for Server mode.',
+            style: TextStyle(color: _textSecondary),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: _buildAppBar(),
