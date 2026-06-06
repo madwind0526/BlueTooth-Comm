@@ -9,6 +9,7 @@ import 'package:mesh_comm/core/diagnostics/diagnostic_config.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/features/contacts/contact_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
+import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
@@ -56,6 +57,10 @@ class _MeshCommAppState extends State<MeshCommApp> {
 
       await DatabaseService().init();
       _settings = await AppSettingsService().load();
+      if (Platform.isWindows && _settings.userLevel != UserLevel.creator) {
+        _settings = _settings.copyWith(userLevel: UserLevel.creator);
+        await AppSettingsService().save(_settings, notify: false);
+      }
       _settingsSubscription = AppSettingsService().settingsStream.listen((
         settings,
       ) {
@@ -65,7 +70,15 @@ class _MeshCommAppState extends State<MeshCommApp> {
       await IdentityService().init();
       debugPrint('[main] nodeId=${_hex(IdentityService().myNodeId)}');
 
-      await ContactService().deleteContact(IdentityService().myNodeId);
+      await ContactService().ensureSelfContact(
+        nodeId: IdentityService().myNodeId,
+        publicKey: IdentityService().myPublicKey,
+        encryptionPublicKey: IdentityService().myEncryptionPublicKey,
+        displayName: _settings.displayName,
+        avatarKey: _settings.avatarKey,
+        userLevel: _settings.userLevel,
+        deviceType: IdentityService().myDeviceType,
+      );
 
       await BleService().init(
         myNodeId: IdentityService().myNodeId,

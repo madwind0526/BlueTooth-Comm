@@ -1,4 +1,5 @@
 import 'package:mesh_comm/features/contacts/contact_model.dart';
+import 'package:mesh_comm/features/identity/user_level.dart';
 
 enum HomeFilter { all, groups, favorites, chats }
 
@@ -24,6 +25,10 @@ String contactCode(Contact contact) {
   return contact.nodeId
       .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
       .join();
+}
+
+bool canOpenChatWithContact(UserLevel myLevel, Contact contact) {
+  return myLevel.canSendMessages && contact.userLevel.canSendMessages;
 }
 
 List<Contact> sortContacts(Iterable<Contact> contacts) {

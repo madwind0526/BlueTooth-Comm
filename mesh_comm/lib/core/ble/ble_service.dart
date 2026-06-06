@@ -70,6 +70,7 @@ class BleService {
 
   /// device별 BLE 전송을 순서대로 처리하여 notify/write가 겹치지 않게 한다.
   final Map<String, Future<void>> _sendQueues = {};
+  final Map<String, DateTime> _lastSendFailureAt = {};
 
   /// 연결 협상 중인 device ID. 반복 scan result로 인한 중복 연결을 막는다.
   final Set<String> _connectingDevices = {};
@@ -100,6 +101,7 @@ class BleService {
 
   /// deviceId → 연속 무응답 횟수
   final Map<String, int> _heartbeatMissed = {};
+  bool _heartbeatInProgress = false;
 
   // ── 공개 Stream ──────────────────────────────────────────────
 
@@ -278,6 +280,29 @@ class BleService {
   }
 
   Future<bool> _sendPacketNow(MeshPacket packet, String deviceId) async {
+    const maxAttempts = 2;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final lastFailureAt = _lastSendFailureAt[deviceId];
+      if (lastFailureAt != null &&
+          DateTime.now().difference(lastFailureAt) <
+              const Duration(milliseconds: 120)) {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+      final success = await _sendPacketAttempt(packet, deviceId);
+      if (success) {
+        _lastSendFailureAt.remove(deviceId);
+        return true;
+      }
+      _messageCharacteristics.remove(deviceId);
+      _lastSendFailureAt[deviceId] = DateTime.now();
+      if (attempt < maxAttempts - 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _sendPacketAttempt(MeshPacket packet, String deviceId) async {
     final device = _connectedDevices[deviceId];
     if (device == null && !_peripheralConnectedDevices.contains(deviceId)) {
       _log('sendPacket: device $deviceId not connected');
@@ -334,15 +359,15 @@ class BleService {
     MeshPacket packet, {
     String? excludeDeviceId,
   }) async {
-    final targets = connectedDeviceIds;
-    var successCount = 0;
-    for (final deviceId in targets) {
-      if (deviceId == excludeDeviceId) continue;
-      if (await sendPacket(packet, deviceId)) {
-        successCount++;
-      }
-    }
-    return successCount;
+    final targets = connectedDeviceIds
+        .where((deviceId) => deviceId != excludeDeviceId)
+        .toList(growable: false);
+    if (targets.isEmpty) return 0;
+
+    final results = await Future.wait([
+      for (final deviceId in targets) sendPacket(packet, deviceId),
+    ]);
+    return results.where((sent) => sent).length;
   }
 
   // ── 연결 관리 ────────────────────────────────────────────────
@@ -368,6 +393,7 @@ class BleService {
         _heartbeatMissed.remove(deviceId);
         _peripheralMtuByDevice.remove(deviceId);
         _sendQueues.remove(deviceId);
+        _lastSendFailureAt.remove(deviceId);
         _fragmentReassembler.removeDevice(deviceId);
         _notifyConnectionChange();
       }
@@ -541,6 +567,7 @@ class BleService {
     _heartbeatMissed.remove(deviceId);
     _messageCharacteristics.remove(deviceId);
     _sendQueues.remove(deviceId);
+    _lastSendFailureAt.remove(deviceId);
     _notificationSubscriptions[deviceId]?.cancel();
     _notificationSubscriptions.remove(deviceId);
     _fragmentReassembler.removeDevice(deviceId);
@@ -584,6 +611,7 @@ class BleService {
         _heartbeatMissed.remove(deviceId);
         _peripheralMtuByDevice.remove(deviceId);
         _sendQueues.remove(deviceId);
+        _lastSendFailureAt.remove(deviceId);
         _fragmentReassembler.removeDevice(deviceId);
         _log('Peripheral central disconnected: $deviceId');
       }
@@ -675,19 +703,25 @@ class BleService {
   void startHeartbeat(Future<MeshPacket> Function() pingPacketFactory) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(BleConstants.heartbeatInterval, (_) async {
-      final deviceIds = connectedDeviceIds;
-      for (final deviceId in deviceIds) {
-        // 무응답 횟수 증가 후 전송
-        _heartbeatMissed[deviceId] = (_heartbeatMissed[deviceId] ?? 0) + 1;
+      if (_heartbeatInProgress) return;
+      _heartbeatInProgress = true;
+      try {
+        final deviceIds = connectedDeviceIds;
+        for (final deviceId in deviceIds) {
+          // 무응답 횟수 증가 후 전송
+          _heartbeatMissed[deviceId] = (_heartbeatMissed[deviceId] ?? 0) + 1;
 
-        if (_heartbeatMissed[deviceId]! > BleConstants.heartbeatMaxMissed) {
-          _log('Heartbeat timeout: removing $deviceId');
-          await disconnect(deviceId);
-          continue;
+          if (_heartbeatMissed[deviceId]! > BleConstants.heartbeatMaxMissed) {
+            _log('Heartbeat timeout: removing $deviceId');
+            await disconnect(deviceId);
+            continue;
+          }
+
+          final ping = await pingPacketFactory();
+          await sendPacket(ping, deviceId);
         }
-
-        final ping = await pingPacketFactory();
-        await sendPacket(ping, deviceId);
+      } finally {
+        _heartbeatInProgress = false;
       }
     });
   }
@@ -728,6 +762,7 @@ class BleService {
     _peripheralMtuByDevice.clear();
     _messageCharacteristics.clear();
     _sendQueues.clear();
+    _lastSendFailureAt.clear();
     _fragmentReassembler.clear();
 
     for (final sub in _connectionSubscriptions.values) {

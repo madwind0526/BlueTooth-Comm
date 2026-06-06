@@ -105,6 +105,12 @@ class BleFragmentReassembler {
       assembly = _FragmentAssembly(frame.count);
       _assemblies[key] = assembly;
     }
+    final existingFragment = assembly.fragments[frame.index];
+    if (existingFragment != null &&
+        !_bytesEqual(existingFragment, frame.payload)) {
+      assembly = _FragmentAssembly(frame.count);
+      _assemblies[key] = assembly;
+    }
     assembly.fragments[frame.index] = frame.payload;
 
     if (assembly.fragments.length != assembly.count) return null;
@@ -132,6 +138,14 @@ class BleFragmentReassembler {
     _assemblies.removeWhere(
       (_, assembly) => assembly.createdAt.isBefore(cutoff),
     );
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }
 

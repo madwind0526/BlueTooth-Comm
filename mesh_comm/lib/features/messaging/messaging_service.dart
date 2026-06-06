@@ -12,9 +12,11 @@ import 'package:mesh_comm/core/packet/msg_type.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/features/contacts/contact_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
+import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 
 import 'message_policy.dart';
+import 'topology_message.dart';
 
 // ── ReceivedMessage ────────────────────────────────────────────────────────────
 
@@ -122,11 +124,17 @@ class MessagingService {
   // 수신 메시지 Stream 컨트롤러
   final StreamController<ReceivedMessage> _messageStreamController =
       StreamController<ReceivedMessage>.broadcast();
+  final StreamController<TopologyResponse> _topologyStreamController =
+      StreamController<TopologyResponse>.broadcast();
 
   // ── 공개 Stream ─────────────────────────────────────────────────────────────
 
   /// 새 수신 TEXT 메시지가 도착할 때마다 emit된다 (복호화 완료 상태).
   Stream<ReceivedMessage> get messageStream => _messageStreamController.stream;
+
+  /// SCAN topology responses from reachable nodes.
+  Stream<TopologyResponse> get topologyStream =>
+      _topologyStreamController.stream;
 
   // ── 초기화 ───────────────────────────────────────────────────────────────────
 
@@ -173,10 +181,10 @@ class MessagingService {
     await broadcastKeyAnnounce();
 
     // KEY_ANNOUNCE 5분 주기 재전송 (R-10)
-    _keyAnnounceTimer = Timer.periodic(
-      const Duration(minutes: 5),
-      (_) async => broadcastKeyAnnounce(),
-    );
+    _keyAnnounceTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
+      _keyAnnounceRespondedNodeIds.clear();
+      await broadcastKeyAnnounce();
+    });
 
     await _db.deleteExpiredMessages();
 
@@ -237,6 +245,9 @@ class MessagingService {
       final trimmedText = text.trim();
       if (trimmedText.isEmpty || trimmedText.length > mode.maxLength) {
         return false;
+      }
+      if (_bytesEqual(targetNodeId, _identity.myNodeId)) {
+        return _sendSelfTextMessage(text: trimmedText, mode: mode);
       }
       if (mode.isNotice) {
         return _sendNoticeMessage(text: trimmedText, mode: mode);
@@ -310,6 +321,25 @@ class MessagingService {
   /// 자신의 공개키를 담은 KEY_ANNOUNCE 패킷을 브로드캐스트한다 (R-10).
   ///
   /// [IdentityService.createKeyAnnouncePacket]으로 생성 후 서명 포함.
+  Future<bool> _sendSelfTextMessage({
+    required String text,
+    required MessageSendMode mode,
+  }) async {
+    final msgId = MeshPacket.generateMsgId();
+    await _db.saveMessage(
+      msgId: msgId,
+      senderId: _identity.myNodeId,
+      targetId: _identity.myNodeId,
+      msgType: MsgType.text.value,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      payload: _encodeTextPayload(text, mode),
+      isOutgoing: true,
+      expiresAt: _expiresAtForLocalDisplay(mode),
+    );
+    _log('SELF TEXT 저장: mode=$mode "${_truncate(text, 30)}"');
+    return true;
+  }
+
   Future<bool> _sendNoticeMessage({
     required String text,
     required MessageSendMode mode,
@@ -326,8 +356,7 @@ class MessagingService {
         ? settings.lastShortNoticeAt
         : settings.lastLongNoticeAt;
 
-    if (lastUsedMs > 0 &&
-        nowMs - lastUsedMs < cooldown.inMilliseconds) {
+    if (lastUsedMs > 0 && nowMs - lastUsedMs < cooldown.inMilliseconds) {
       _log('NOTICE 전송 실패: 하루 1회 제한 mode=$mode');
       return false;
     }
@@ -410,8 +439,10 @@ class MessagingService {
     return sentAny;
   }
 
-  Future<bool> _sendLongNoticeBroadcast(String text, MessageSendMode mode) async {
-
+  Future<bool> _sendLongNoticeBroadcast(
+    String text,
+    MessageSendMode mode,
+  ) async {
     final packet = MeshPacket.create(
       senderId: _identity.myNodeId,
       targetId: MeshPacket.broadcast,
@@ -442,12 +473,18 @@ class MessagingService {
     return true;
   }
 
-  Future<int> _broadcastPacketWithRetry(MeshPacket packet) async {
+  Future<int> _broadcastPacketWithRetry(
+    MeshPacket packet, {
+    String? excludeDeviceId,
+  }) async {
     var recipientCount = 0;
     for (var attempt = 0; attempt < 3; attempt++) {
-      recipientCount = await _ble.broadcastPacket(packet);
+      recipientCount = await _ble.broadcastPacket(
+        packet,
+        excludeDeviceId: excludeDeviceId,
+      );
       if (recipientCount > 0) return recipientCount;
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
     }
     return recipientCount;
   }
@@ -478,6 +515,39 @@ class MessagingService {
   /// 5. TTL 체크 후 릴레이 (R-09 RPF)
 
   /// BleService.onPacketReceived 콜백에서 호출하는 public 진입점.
+  Future<String?> requestTopologyScan({required int depth}) async {
+    try {
+      final effectiveDepth = _limitTopologyDepth(depth);
+      if (effectiveDepth == 0) return null;
+
+      final requestId = _hex(MeshPacket.generateMsgId());
+      final request = TopologyRequest(
+        requestId: requestId,
+        requestedDepth: effectiveDepth,
+      );
+      final packet = MeshPacket.create(
+        senderId: _identity.myNodeId,
+        targetId: MeshPacket.broadcast,
+        msgType: MsgType.topologyRequest,
+        payload: request.toPayload(),
+        ttl: effectiveDepth < 0 ? MeshPacket.defaultTtl : effectiveDepth,
+      );
+      packet.signature = await _crypto.sign(
+        packet.toSignableBytes(),
+        _identity.myPrivateKeySeed,
+      );
+
+      final recipientCount = await _broadcastPacketWithRetry(packet);
+      _log(
+        'TOPOLOGY_REQUEST sent depth=$effectiveDepth neighbors=$recipientCount',
+      );
+      return requestId;
+    } catch (e) {
+      _log('requestTopologyScan error: $e');
+      return null;
+    }
+  }
+
   Future<void> handleIncomingPacket(MeshPacket packet, String fromDeviceId) =>
       _handleIncomingPacket(packet, fromDeviceId);
 
@@ -531,6 +601,10 @@ class MessagingService {
       case MsgType.pong:
         _ble.markHeartbeatResponse(fromDeviceId);
         _log('PONG 수신: sender=${_hexShort(packet.senderId)}');
+      case MsgType.topologyRequest:
+        await _handleTopologyRequestPacket(packet);
+      case MsgType.topologyResponse:
+        await _handleTopologyResponsePacket(packet);
       case MsgType.adminNotice:
         // Phase 3 구현 예정
         _log('ADMIN_NOTICE 수신 (Phase 3 미구현): ${_hexShort(packet.msgId)}');
@@ -544,13 +618,17 @@ class MessagingService {
       _log('DROP(TTL=0): ${_hexShort(packet.msgId)}');
       return;
     }
+    if (packet.hopCount >= 255) {
+      _log('DROP(hop overflow): ${_hexShort(packet.msgId)}');
+      return;
+    }
 
     // C-1 수정: ttl/hopCount는 toSignableBytes()에서 제외됨 → 재서명 불필요
     // 원래 발신자 서명을 그대로 유지한 채 ttl/hopCount만 변경하여 릴레이
     packet.ttl -= 1;
     packet.hopCount += 1;
 
-    final relayed = await _ble.broadcastPacket(
+    final relayed = await _broadcastPacketWithRetry(
       packet,
       excludeDeviceId: fromDeviceId,
     );
@@ -712,6 +790,67 @@ class MessagingService {
   // ── PING 패킷 처리 ────────────────────────────────────────────────────────────
 
   /// PING 패킷에 PONG으로 응답한다.
+  Future<void> _handleTopologyRequestPacket(MeshPacket packet) async {
+    final request = TopologyRequest.fromPayload(packet.payload);
+    final contacts = await _topologyNeighborSummaries();
+    final settings = AppSettingsService().current;
+    final response = TopologyResponse(
+      requestId: request.requestId,
+      responder: TopologyNodeSummary(
+        nodeId: _identity.myNodeId,
+        displayName: settings.displayName,
+        deviceType: _identity.myDeviceType,
+        userLevel: settings.userLevel,
+        isSaved: true,
+        lastSeen: DateTime.now().millisecondsSinceEpoch,
+      ),
+      neighbors: contacts,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+    );
+    final responsePacket = MeshPacket.create(
+      senderId: _identity.myNodeId,
+      targetId: Uint8List.fromList(packet.senderId),
+      msgType: MsgType.topologyResponse,
+      payload: response.toPayload(),
+      ttl: MeshPacket.defaultTtl,
+    );
+    responsePacket.signature = await _crypto.sign(
+      responsePacket.toSignableBytes(),
+      _identity.myPrivateKeySeed,
+    );
+    final recipientCount = await _broadcastPacketWithRetry(responsePacket);
+    _log(
+      'TOPOLOGY_RESPONSE sent request=${request.requestId.substring(0, 8)} '
+      'neighbors=${contacts.length} recipients=$recipientCount',
+    );
+  }
+
+  Future<void> _handleTopologyResponsePacket(MeshPacket packet) async {
+    if (!_bytesEqual(packet.targetId, _identity.myNodeId)) return;
+    final response = TopologyResponse.fromPayload(packet.payload);
+    if (!_topologyStreamController.isClosed) {
+      _topologyStreamController.add(response);
+    }
+    _log(
+      'TOPOLOGY_RESPONSE received responder=${_hexShort(response.responder.nodeId)} '
+      'neighbors=${response.neighbors.length}',
+    );
+  }
+
+  Future<List<TopologyNodeSummary>> _topologyNeighborSummaries() async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final recentCutoff = nowMs - const Duration(minutes: 3).inMilliseconds;
+    final contacts = await _contacts.getAllContacts();
+    final summaries = <TopologyNodeSummary>[];
+    for (final contact in contacts) {
+      if (_bytesEqual(contact.nodeId, _identity.myNodeId)) continue;
+      if (!contact.isSaved && contact.lastSeen < recentCutoff) continue;
+      summaries.add(TopologyNodeSummary.fromContact(contact));
+      if (summaries.length >= 40) break;
+    }
+    return summaries;
+  }
+
   Future<void> _handlePingPacket(MeshPacket packet, String fromDeviceId) async {
     _log('PING 수신: sender=${_hexShort(packet.senderId)}');
 
@@ -771,7 +910,11 @@ class MessagingService {
     Uint8List contactNodeId, {
     int limit = 50,
   }) async {
-    final rows = await _db.getMessages(contactNodeId, limit: limit);
+    final rows = await _db.getMessages(
+      contactNodeId,
+      myNodeId: _identity.myNodeId,
+      limit: limit,
+    );
     final contact = await _contacts.getContact(contactNodeId);
     final isTrusted = contact?.isTrusted ?? false;
 
@@ -838,6 +981,9 @@ class MessagingService {
     if (!_messageStreamController.isClosed) {
       await _messageStreamController.close();
     }
+    if (!_topologyStreamController.isClosed) {
+      await _topologyStreamController.close();
+    }
 
     _initialized = false;
     _log('MessagingService 해제 완료');
@@ -877,8 +1023,7 @@ class MessagingService {
     final raw = utf8.decode(payload);
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic> ||
-          decoded['meshTextVersion'] != 1) {
+      if (decoded is! Map<String, dynamic> || decoded['meshTextVersion'] != 1) {
         return _DecodedTextPayload(text: raw);
       }
       final text = decoded['text'];
@@ -896,6 +1041,15 @@ class MessagingService {
     if (mode != MessageSendMode.timed) return null;
     return DateTime.now().millisecondsSinceEpoch +
         MessagePolicy.timedMessageReadTtl.inMilliseconds;
+  }
+
+  int _limitTopologyDepth(int depth) {
+    final normalized = depth < -1 ? 1 : depth;
+    final level = AppSettingsService().current.userLevel;
+    final isLimited = level == UserLevel.user || level == UserLevel.server;
+    if (!isLimited) return normalized;
+    if (normalized == -1) return 3;
+    return normalized > 3 ? 3 : normalized;
   }
 
   Future<Uint8List?> _resolveSenderPublicKey(

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:mesh_comm/core/crypto/crypto_service.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
+import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 
@@ -50,7 +51,8 @@ class ContactService {
         existingDisplayName == null ||
         existingDisplayName == previousRemoteDisplayName;
     final shouldAdoptRemoteAvatar =
-        existingAvatarKey == null || existingAvatarKey == previousRemoteAvatarKey;
+        existingAvatarKey == null ||
+        existingAvatarKey == previousRemoteAvatarKey;
     final storedDisplayName = shouldAdoptRemoteName
         ? remoteDisplayName ?? existingDisplayName
         : existingDisplayName;
@@ -139,7 +141,8 @@ class ContactService {
           _trimToNull(row['group_name'] as String?)?.isNotEmpty ?? false;
       final isTrusted = (row['is_trusted'] as int? ?? 0) == 1;
       final isFavorite = (row['is_favorite'] as int? ?? 0) == 1;
-      final replaceable = !isTrusted && !isFavorite && !hasGroup && !hasMessages;
+      final replaceable =
+          !isTrusted && !isFavorite && !hasGroup && !hasMessages;
 
       if (!replaceable) continue;
       await _db.deleteContact(candidateNodeId);
@@ -165,6 +168,37 @@ class ContactService {
     await _emitContacts();
   }
 
+  Future<Contact> ensureSelfContact({
+    required Uint8List nodeId,
+    required Uint8List publicKey,
+    Uint8List? encryptionPublicKey,
+    required String displayName,
+    required String avatarKey,
+    required UserLevel userLevel,
+    required MeshDeviceType deviceType,
+  }) async {
+    final fp = _crypto.fingerprint(publicKey);
+    await _db.upsertContact(
+      nodeId,
+      publicKey,
+      encryptionPublicKey: encryptionPublicKey,
+      displayName: _trimToNull(displayName) ?? 'Me',
+      trusted: true,
+      fingerprint: fp,
+      deviceType: deviceType.wireName,
+      avatarKey: _trimToNull(avatarKey),
+      remoteDisplayName: _trimToNull(displayName) ?? 'Me',
+      remoteAvatarKey: _trimToNull(avatarKey),
+      savedContact: true,
+      userLevel: userLevel.wireName,
+    );
+
+    final row = await _db.getContact(nodeId);
+    final contact = Contact.fromMap(row!);
+    await _emitContacts();
+    return contact;
+  }
+
   Future<bool> setSaved(Uint8List nodeId, bool saved) async {
     if (saved) {
       final existing = await _db.getContact(nodeId);
@@ -172,7 +206,11 @@ class ContactService {
       final limit = AppSettingsService().current.userLevel.savedContactLimit;
       if (!alreadySaved && limit != null) {
         final savedCount = (await getAllContacts())
-            .where((contact) => contact.isSaved)
+            .where(
+              (contact) =>
+                  contact.isSaved &&
+                  !_bytesEqual(contact.nodeId, IdentityService().myNodeId),
+            )
             .length;
         if (savedCount >= limit) return false;
       }

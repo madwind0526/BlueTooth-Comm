@@ -158,8 +158,12 @@ class DatabaseService {
       );
     }
     if (oldVersion < 6) {
-      await db.execute('ALTER TABLE contacts ADD COLUMN remote_display_name TEXT');
-      await db.execute('ALTER TABLE contacts ADD COLUMN remote_avatar_key TEXT');
+      await db.execute(
+        'ALTER TABLE contacts ADD COLUMN remote_display_name TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE contacts ADD COLUMN remote_avatar_key TEXT',
+      );
     }
     if (oldVersion < 7) {
       await db.execute(
@@ -258,10 +262,9 @@ class DatabaseService {
       'remote_display_name':
           remoteDisplayName ?? existing?['remote_display_name'],
       'remote_avatar_key': remoteAvatarKey ?? existing?['remote_avatar_key'],
-      'is_saved':
-          (savedContact ?? ((existing?['is_saved'] as int? ?? 1) == 1))
-              ? 1
-              : 0,
+      'is_saved': (savedContact ?? ((existing?['is_saved'] as int? ?? 1) == 1))
+          ? 1
+          : 0,
       'user_level': userLevel ?? existing?['user_level'] ?? 'user',
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
@@ -393,7 +396,26 @@ class DatabaseService {
     );
   }
 
-  Future<int> deleteMessagesForContact(Uint8List contactNodeId) {
+  Future<int> deleteMessagesForContact(
+    Uint8List contactNodeId, {
+    Uint8List? myNodeId,
+  }) {
+    if (myNodeId != null) {
+      if (_bytesEqual(contactNodeId, myNodeId)) {
+        return _database.delete(
+          'messages',
+          where: 'sender_id = ? AND target_id = ?',
+          whereArgs: [myNodeId, myNodeId],
+        );
+      }
+      return _database.delete(
+        'messages',
+        where:
+            '(sender_id = ? AND target_id = ?) OR '
+            '(sender_id = ? AND target_id = ?)',
+        whereArgs: [contactNodeId, myNodeId, myNodeId, contactNodeId],
+      );
+    }
     return _database.delete(
       'messages',
       where: 'sender_id = ? OR target_id = ?',
@@ -415,10 +437,7 @@ class DatabaseService {
     );
   }
 
-  Future<void> setMessageExpiresAtIfNull(
-    Uint8List msgId,
-    int expiresAt,
-  ) async {
+  Future<void> setMessageExpiresAtIfNull(Uint8List msgId, int expiresAt) async {
     await _database.update(
       'messages',
       {'expires_at': expiresAt},
@@ -461,10 +480,39 @@ class DatabaseService {
   /// sender_id 또는 target_id 가 [contactNodeId] 인 행을 조회한다.
   Future<List<Map<String, dynamic>>> getMessages(
     Uint8List contactNodeId, {
+    Uint8List? myNodeId,
     int limit = 50,
   }) async {
     await deleteExpiredMessages();
     final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (myNodeId != null) {
+      final isSelf = _bytesEqual(contactNodeId, myNodeId);
+      final rows = await _database.rawQuery(
+        isSelf
+            ? '''
+              SELECT * FROM messages
+              WHERE sender_id = ?
+                AND target_id = ?
+                AND (expires_at IS NULL OR expires_at > ?)
+              ORDER BY timestamp ASC
+              LIMIT ?
+              '''
+            : '''
+              SELECT * FROM messages
+              WHERE (
+                  (sender_id = ? AND target_id = ?)
+                  OR (sender_id = ? AND target_id = ?)
+                )
+                AND (expires_at IS NULL OR expires_at > ?)
+              ORDER BY timestamp ASC
+              LIMIT ?
+              ''',
+        isSelf
+            ? [myNodeId, myNodeId, nowMs, limit]
+            : [contactNodeId, myNodeId, myNodeId, contactNodeId, nowMs, limit],
+      );
+      return rows.map(_blobRow).toList();
+    }
     final rows = await _database.rawQuery(
       '''
       SELECT * FROM messages
@@ -476,6 +524,14 @@ class DatabaseService {
       [contactNodeId, contactNodeId, nowMs, limit],
     );
     return rows.map(_blobRow).toList();
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<List<Uint8List>> getContactNodeIdsWithMessages(
@@ -581,6 +637,15 @@ class DatabaseService {
       where: 'seen_at < ?',
       whereArgs: [cutoffMs],
     );
+    await _database.rawDelete('''
+      DELETE FROM seen_messages
+      WHERE msg_id NOT IN (
+        SELECT msg_id
+        FROM seen_messages
+        ORDER BY seen_at DESC
+        LIMIT 10000
+      )
+    ''');
   }
 
   // ── 내부 유틸리티 ─────────────────────────────────────────────────────────

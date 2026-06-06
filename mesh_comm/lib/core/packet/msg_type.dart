@@ -21,7 +21,13 @@ enum MsgType {
   ping(0x05),
 
   /// Heartbeat 응답
-  pong(0x06);
+  pong(0x06),
+
+  /// SCAN topology request. Receivers respond with their 1-hop view.
+  topologyRequest(0x07),
+
+  /// SCAN topology response containing one node's direct neighbor summary.
+  topologyResponse(0x08);
 
   final int value;
   const MsgType(this.value);

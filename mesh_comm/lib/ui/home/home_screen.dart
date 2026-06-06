@@ -19,6 +19,9 @@ import 'package:mesh_comm/features/identity/identity_backup_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
+import 'package:mesh_comm/features/messaging/topology_demo.dart';
+import 'package:mesh_comm/features/messaging/topology_graph.dart';
+import 'package:mesh_comm/features/messaging/topology_message.dart';
 import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
@@ -41,6 +44,32 @@ enum _GroupAction { rename, toggleFavorite, delete }
 
 enum _HomeSection { home, search, scan }
 
+Color _roleColor(
+  BuildContext context, {
+  required UserLevel userLevel,
+  required bool isSelf,
+}) {
+  final scheme = Theme.of(context).colorScheme;
+  if (isSelf) {
+    return scheme.brightness == Brightness.dark
+        ? Colors.orangeAccent
+        : Colors.deepOrange;
+  }
+  if (userLevel == UserLevel.server) {
+    return scheme.brightness == Brightness.dark
+        ? Colors.grey.shade500
+        : Colors.grey.shade600;
+  }
+  if (userLevel == UserLevel.creator ||
+      userLevel == UserLevel.builder ||
+      userLevel == UserLevel.admin) {
+    return scheme.brightness == Brightness.dark
+        ? const Color(0xFFFF6B6B)
+        : const Color(0xFFD32F2F);
+  }
+  return scheme.onSurface;
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -51,6 +80,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   static const _accent = Color(0xFF7C6AF7);
   static const _bluetooth = Color(0xFF8B7CF6);
+  static const _alertChannel = MethodChannel('mesh_comm/alerts');
 
   final _contactService = ContactService();
   final _contactFileService = ContactFileService();
@@ -63,10 +93,16 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<List<Contact>>? _contactsSubscription;
   StreamSubscription<AppSettings>? _settingsSubscription;
   StreamSubscription<ReceivedMessage>? _messageSubscription;
+  StreamSubscription<TopologyResponse>? _topologySubscription;
   Timer? _chatCleanupTimer;
   List<Contact> _contacts = [];
   Set<String> _chatContactCodes = {};
   Map<String, int> _unreadCounts = {};
+  String? _activeTopologyRequestId;
+  final Map<String, TopologyResponse> _topologyResponses = {};
+  List<Contact> _demoContacts = const [];
+  List<TopologyResponse> _demoTopologyResponses = const [];
+  bool _showScanNodeCounts = false;
   AppSettings _settings = const AppSettings();
   HomeFilter _filter = HomeFilter.all;
   _HomeSection _section = _HomeSection.home;
@@ -99,9 +135,21 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() => _contacts = sortContacts(contacts));
     });
     _messageSubscription = MessagingService().messageStream.listen((_) {
-      unawaited(SystemSound.play(SystemSoundType.alert));
+      _playIncomingMessageAlert();
       _loadChatContactCodes();
       _loadUnreadCounts();
+    });
+    _topologySubscription = MessagingService().topologyStream.listen((
+      response,
+    ) {
+      if (!mounted) return;
+      final activeRequestId = _activeTopologyRequestId;
+      if (activeRequestId != null && response.requestId != activeRequestId) {
+        return;
+      }
+      setState(() {
+        _topologyResponses[_nodeHex(response.responder.nodeId)] = response;
+      });
     });
     _chatCleanupTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -109,6 +157,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _settingsSubscription = _settingsService.settingsStream.listen((settings) {
       if (!mounted) return;
+      unawaited(_ensureSelfContact(settings));
+      _syncDemoTopology(settings.demoMode);
       setState(() {
         _settings = settings;
         _scanDepthController.text = settings.scanDefaultDepth.toString();
@@ -123,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _contactsSubscription?.cancel();
     _settingsSubscription?.cancel();
     _messageSubscription?.cancel();
+    _topologySubscription?.cancel();
     _chatCleanupTimer?.cancel();
     _searchController
       ..removeListener(_refresh)
@@ -158,6 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadSettings() async {
     final settings = await _settingsService.load();
+    await _ensureSelfContact(settings);
+    _syncDemoTopology(settings.demoMode);
     if (!mounted) return;
     setState(() {
       _settings = settings;
@@ -167,6 +220,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  void _playIncomingMessageAlert() {
+    switch (_settings.messageAlertMode) {
+      case MessageAlertMode.sound:
+        unawaited(_playNativeAlert());
+      case MessageAlertMode.vibration:
+        unawaited(_vibrateNativeAlert());
+      case MessageAlertMode.silent:
+        break;
+    }
+  }
+
+  Future<void> _playNativeAlert() async {
+    try {
+      await _alertChannel.invokeMethod<void>('playAlert');
+    } catch (_) {
+      await SystemSound.play(SystemSoundType.alert);
+    }
+  }
+
+  Future<void> _vibrateNativeAlert() async {
+    try {
+      await _alertChannel.invokeMethod<void>('vibrate');
+    } catch (_) {
+      await HapticFeedback.vibrate();
+    }
   }
 
   TransportStatus _transport(TransportKind kind) => _transports[kind]!;
@@ -195,6 +275,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _runScan() async {
+    if (_settings.demoMode) {
+      setState(() {
+        _isScanning = false;
+        _syncDemoTopology(true);
+        _scanDepthController.text = '5';
+      });
+      return;
+    }
+
     if (!_bluetoothEnabled) {
       _showMessage('Bluetooth를 먼저 켜주세요.');
       return;
@@ -203,9 +292,27 @@ class _HomeScreenState extends State<HomeScreen> {
       staleAfter: const Duration(minutes: 5),
     );
     await _loadContacts();
-    setState(() => _isScanning = true);
+    if (!mounted) return;
+    setState(() {
+      _isScanning = true;
+      if (!_settings.demoMode) {
+        _demoContacts = const [];
+        _demoTopologyResponses = const [];
+      }
+      _activeTopologyRequestId = null;
+      _topologyResponses.clear();
+    });
     await _bleService.startScan();
     await MessagingService().broadcastKeyAnnounce();
+    final scanDepth =
+        int.tryParse(_scanDepthController.text.trim()) ??
+        _settings.scanDefaultDepth;
+    final requestId = await MessagingService().requestTopologyScan(
+      depth: _limitedScanDepth(scanDepth),
+    );
+    if (mounted && requestId != null) {
+      setState(() => _activeTopologyRequestId = requestId);
+    }
     unawaited(
       Future<void>.delayed(
         const Duration(seconds: 3),
@@ -217,15 +324,37 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _syncDemoTopology(bool enabled) {
+    if (!enabled) {
+      _demoContacts = const [];
+      _demoTopologyResponses = const [];
+      return;
+    }
+
+    final scenario = DemoTopologyScenario.large();
+    _demoContacts = scenario.directContacts;
+    _demoTopologyResponses = scenario.responses;
+    _activeTopologyRequestId = 'demo-large';
+    _topologyResponses.clear();
+  }
+
   Future<void> _openQrScreen() async {
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const QrScreen()),
     );
+    if (!mounted) return;
     _goHome();
   }
 
   Future<void> _openChat(Contact contact) async {
+    if (!canOpenChatWithContact(_settings.userLevel, contact)) {
+      final message = !_settings.userLevel.canSendMessages
+          ? 'Server mode only relays messages. Chat is disabled.'
+          : '${contactDisplayName(contact)} is Server mode. Chat is disabled.';
+      _showMessage(message);
+      return;
+    }
     await DatabaseService().markMessagesReadForContact(
       contact.nodeId,
       IdentityService().myNodeId,
@@ -242,6 +371,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     await _loadChatContactCodes();
     await _loadUnreadCounts();
+    if (!mounted) return;
     _goHome();
   }
 
@@ -271,10 +401,74 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showMessage(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
   }
+
+  Future<Contact> _ensureSelfContact([AppSettings? settings]) {
+    final current = settings ?? _settings;
+    return _contactService.ensureSelfContact(
+      nodeId: IdentityService().myNodeId,
+      publicKey: IdentityService().myPublicKey,
+      encryptionPublicKey: IdentityService().myEncryptionPublicKey,
+      displayName: current.displayName,
+      avatarKey: current.avatarKey,
+      userLevel: current.userLevel,
+      deviceType: IdentityService().myDeviceType,
+    );
+  }
+
+  Contact? _storedSelfContact() {
+    final myNodeId = IdentityService().myNodeId;
+    for (final contact in _contacts) {
+      if (_bytesEqual(contact.nodeId, myNodeId)) return contact;
+    }
+    return null;
+  }
+
+  Contact _selfContact() {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final stored = _storedSelfContact();
+    return Contact(
+      nodeId: IdentityService().myNodeId,
+      publicKey: IdentityService().myPublicKey,
+      encryptionPublicKey: IdentityService().myEncryptionPublicKey,
+      displayName: _settings.displayName,
+      isTrusted: true,
+      fingerprint: IdentityService().myFingerprint,
+      firstSeen: stored?.firstSeen ?? nowMs,
+      lastSeen: stored?.lastSeen ?? nowMs,
+      isFavorite: stored?.isFavorite ?? false,
+      groupName: stored?.groupName,
+      deviceType: IdentityService().myDeviceType,
+      avatarKey: _settings.avatarKey,
+      isSaved: true,
+      userLevel: _settings.userLevel,
+    );
+  }
+
+  List<Contact> _savedContactsExcludingSelf() {
+    final myNodeId = IdentityService().myNodeId;
+    return _contacts
+        .where(
+          (contact) =>
+              contact.isSaved && !_bytesEqual(contact.nodeId, myNodeId),
+        )
+        .toList();
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  String _nodeHex(Uint8List bytes) =>
+      bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
   Future<void> _showSettings() async {
     final nextSettings = await showDialog<AppSettings>(
@@ -292,8 +486,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Let Android finish closing the IME/dialog before broadcasting a theme
     // rebuild to the whole app.
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    await _settingsService.save(nextSettings);
-    await MessagingService().broadcastKeyAnnounce();
+    await _saveSelfSettings(nextSettings);
     if (!mounted) return;
     setState(() {
       _settings = nextSettings;
@@ -333,6 +526,10 @@ class _HomeScreenState extends State<HomeScreen> {
     Contact contact,
     _ContactAction action,
   ) async {
+    if (_bytesEqual(contact.nodeId, IdentityService().myNodeId)) {
+      await _handleSelfContactAction(contact, action);
+      return;
+    }
     switch (action) {
       case _ContactAction.rename:
         await _renameContact(contact);
@@ -351,6 +548,32 @@ class _HomeScreenState extends State<HomeScreen> {
       case _ContactAction.delete:
         await _deleteContact(contact);
     }
+  }
+
+  Future<void> _handleSelfContactAction(
+    Contact contact,
+    _ContactAction action,
+  ) async {
+    switch (action) {
+      case _ContactAction.rename:
+        await _renameSelfContact(contact);
+      case _ContactAction.toggleTrust:
+        await _contactService.setTrusted(contact.nodeId, true);
+      case _ContactAction.toggleFavorite:
+        await _contactService.setFavorite(contact.nodeId, !contact.isFavorite);
+      case _ContactAction.setGroup:
+        await _setContactGroup(contact);
+      case _ContactAction.setAvatar:
+        await _setSelfAvatar(contact);
+      case _ContactAction.setLevel:
+        await _setSelfLevel();
+      case _ContactAction.deleteMessages:
+        await _deleteContactMessages(contact);
+      case _ContactAction.delete:
+        _showMessage('This device contact cannot be deleted.');
+    }
+    await _ensureSelfContact();
+    await _loadContacts();
   }
 
   Future<void> _handleGroupAction(
@@ -380,6 +603,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (name == null) return;
     await _contactService.renameContact(contact.nodeId, name);
+  }
+
+  Future<void> _renameSelfContact(Contact contact) async {
+    final name = await _askForText(
+      title: 'Rename',
+      label: 'My name',
+      initialValue: contact.displayName ?? _settings.displayName,
+      hint: 'Empty name becomes Me',
+    );
+    if (name == null) return;
+    final displayName = name.trim().isEmpty ? 'Me' : name.trim();
+    await _saveSelfSettings(_settings.copyWith(displayName: displayName));
   }
 
   Future<void> _setContactGroup(Contact contact) async {
@@ -428,6 +663,83 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (nextKey == null) return;
     await _contactService.setAvatar(contact.nodeId, nextKey);
+  }
+
+  Future<void> _setSelfAvatar(Contact contact) async {
+    var selectedKey = contact.avatarKey ?? _settings.avatarKey;
+    final nextKey = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Avatar'),
+              content: SizedBox(
+                width: 300,
+                child: AvatarPickerGrid(
+                  selectedKey: selectedKey,
+                  onSelected: (key) {
+                    setDialogState(() => selectedKey = key);
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, selectedKey),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (nextKey == null) return;
+    await _saveSelfSettings(_settings.copyWith(avatarKey: nextKey));
+  }
+
+  Future<void> _setSelfLevel() async {
+    final levels = _settings.userLevel.selfSelectableLevels;
+    if (levels.length <= 1) {
+      _showMessage('This level is fixed on this device.');
+      return;
+    }
+    var selected = _settings.userLevel;
+    final nextLevel = await showDialog<UserLevel>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('My level'),
+          content: DropdownButton<UserLevel>(
+            value: selected,
+            isExpanded: true,
+            items: [
+              for (final level in levels)
+                DropdownMenuItem(value: level, child: Text(level.label)),
+            ],
+            onChanged: (level) {
+              if (level != null) setDialogState(() => selected = level);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (nextLevel == null) return;
+    await _saveSelfSettings(_settings.copyWith(userLevel: nextLevel));
   }
 
   Future<void> _setContactLevel(Contact contact) async {
@@ -574,6 +886,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirmed != true) return;
     final count = await DatabaseService().deleteMessagesForContact(
       contact.nodeId,
+      myNodeId: IdentityService().myNodeId,
     );
     await _loadChatContactCodes();
     await _loadUnreadCounts();
@@ -603,6 +916,17 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadChatContactCodes();
     await _loadUnreadCounts();
     _showMessage('Deleted $count messages.');
+  }
+
+  Future<void> _saveSelfSettings(AppSettings settings) async {
+    await _settingsService.save(settings);
+    await _ensureSelfContact(settings);
+    await MessagingService().broadcastKeyAnnounce();
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _scanDepthController.text = settings.scanDefaultDepth.toString();
+    });
   }
 
   Future<void> _importContacts() async {
@@ -655,16 +979,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _backupIdentity() async {
     try {
-      final json = await _identityBackupService.exportToJson();
+      final password = await _askIdentityBackupPassword(confirm: true);
+      if (password == null) return;
+      final json = await _identityBackupService.exportToJson(
+        password: password,
+      );
       final filename =
-          'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.json';
+          'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.enc.json';
       String savedPath;
 
       try {
         final location = await getSaveLocation(
           suggestedName: filename,
           acceptedTypeGroups: const [
-            XTypeGroup(label: 'MeshComm identity', extensions: ['json']),
+            XTypeGroup(
+              label: 'Encrypted MeshComm identity',
+              extensions: ['json'],
+            ),
           ],
         );
         if (location == null) return;
@@ -677,7 +1008,7 @@ class _HomeScreenState extends State<HomeScreen> {
         savedPath = file.path;
       }
 
-      _showMessage('Identity backup 저장 완료: $savedPath');
+      _showMessage('Encrypted identity backup 저장 완료: $savedPath');
     } catch (e) {
       _showMessage('Identity backup 실패: $e');
     }
@@ -709,13 +1040,19 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final file = await openFile(
         acceptedTypeGroups: const [
-          XTypeGroup(label: 'MeshComm identity', extensions: ['json']),
+          XTypeGroup(
+            label: 'Encrypted MeshComm identity',
+            extensions: ['json'],
+          ),
         ],
       );
       if (file == null) return;
+      final password = await _askIdentityBackupPassword(confirm: false);
+      if (password == null) return;
 
       final nodeId = await _identityBackupService.restoreFromJson(
         await file.readAsString(),
+        password: password,
       );
       _showMessage(
         'Identity restore 완료: ${nodeId.substring(0, 8)}. 앱을 재시작해주세요.',
@@ -723,6 +1060,97 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       _showMessage('Identity restore 실패: $e');
     }
+  }
+
+  Future<String?> _askIdentityBackupPassword({required bool confirm}) {
+    var password = '';
+    var confirmPassword = '';
+    String? errorText;
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(confirm ? 'Backup password' : 'Restore password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                confirm
+                    ? '이 암호는 identity backup 파일을 암호화합니다. 앱은 암호를 저장하지 않습니다.'
+                    : 'Backup 때 정한 암호를 입력하세요.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                autofocus: true,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  helperText: '8자 이상',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) {
+                  password = value;
+                  if (errorText != null) {
+                    setDialogState(() => errorText = null);
+                  }
+                },
+              ),
+              if (confirm) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm password',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (value) {
+                    confirmPassword = value;
+                    if (errorText != null) {
+                      setDialogState(() => errorText = null);
+                    }
+                  },
+                ),
+              ],
+              if (errorText != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    errorText!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (password.length < 8) {
+                  setDialogState(() => errorText = '암호는 8자 이상이어야 합니다.');
+                  return;
+                }
+                if (confirm && password != confirmPassword) {
+                  setDialogState(() => errorText = '암호가 일치하지 않습니다.');
+                  return;
+                }
+                Navigator.pop(context, password);
+              },
+              child: Text(confirm ? 'Backup' : 'Restore'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _cleanupStaleContacts() async {
@@ -912,27 +1340,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFilteredList() {
-    final savedContacts = _contacts
-        .where((contact) => contact.isSaved)
-        .toList();
+    final selfContact = _selfContact();
+    final savedContacts = _savedContactsExcludingSelf();
     if (_filter == HomeFilter.groups) {
       return _GroupList(
-        groups: buildGroups(savedContacts),
+        groups: buildGroups([selfContact, ...savedContacts]),
         onTap: _openGroup,
         onAction: _handleGroupAction,
       );
     }
 
     final contacts = switch (_filter) {
-      HomeFilter.favorites =>
-        savedContacts.where((contact) => contact.isFavorite).toList(),
-      HomeFilter.chats =>
-        savedContacts
-            .where(
-              (contact) => _chatContactCodes.contains(contactCode(contact)),
-            )
-            .toList(),
-      _ => savedContacts,
+      HomeFilter.favorites => [
+        if (selfContact.isFavorite) selfContact,
+        ...savedContacts.where((contact) => contact.isFavorite),
+      ],
+      HomeFilter.chats => [
+        if (_chatContactCodes.contains(contactCode(selfContact))) selfContact,
+        ...savedContacts.where(
+          (contact) => _chatContactCodes.contains(contactCode(contact)),
+        ),
+      ],
+      _ => [selfContact, ...savedContacts],
     };
     return _ContactList(
       contacts: contacts,
@@ -944,9 +1373,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSearch() {
-    final savedContacts = _contacts
-        .where((contact) => contact.isSaved)
-        .toList();
+    final savedContacts = [_selfContact(), ..._savedContactsExcludingSelf()];
     final groups = searchGroups(
       buildGroups(savedContacts),
       _searchController.text,
@@ -1002,7 +1429,15 @@ class _HomeScreenState extends State<HomeScreen> {
         int.tryParse(_scanDepthController.text.trim()) ??
         _settings.scanDefaultDepth;
     final depth = _limitedScanDepth(parsedDepth);
-    final visibleContacts = depth == 0 ? <Contact>[] : _scanVisibleContacts();
+    final demoMode = _settings.demoMode;
+    final visibleContacts = depth == 0
+        ? <Contact>[]
+        : demoMode
+        ? _demoContacts
+        : _scanVisibleContacts();
+    final topologyResponses = demoMode
+        ? _demoTopologyResponses
+        : _topologyResponses.values.toList();
 
     return Column(
       children: [
@@ -1027,6 +1462,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _ScanTreePreview(
             contacts: visibleContacts,
+            topologyResponses: topologyResponses,
             depth: depth,
             isScanning: _isScanning,
             myName: _settings.displayName,
@@ -1035,6 +1471,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onOpenContact: _openChat,
             onAddContact: _addScannedContact,
             depthController: _scanDepthController,
+            showNodeCounts: _showScanNodeCounts,
+            onShowNodeCountsChanged: (value) {
+              setState(() => _showScanNodeCounts = value);
+            },
           ),
         ),
       ],
@@ -1056,8 +1496,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final recentCutoff =
         DateTime.now().millisecondsSinceEpoch -
         const Duration(minutes: 3).inMilliseconds;
+    final myNodeId = IdentityService().myNodeId;
     return _contacts
-        .where((contact) => contact.isSaved || contact.lastSeen >= recentCutoff)
+        .where(
+          (contact) =>
+              !_bytesEqual(contact.nodeId, myNodeId) &&
+              (contact.isSaved || contact.lastSeen >= recentCutoff),
+        )
         .toList();
   }
 
@@ -1383,6 +1828,13 @@ class _ContactTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final group = contact.groupName?.trim();
+    final groupLabel = group == null || group.isEmpty ? '[]' : '[$group]';
+    final isSelf = _isSelfContact(contact);
+    final nameColor = _roleColor(
+      context,
+      userLevel: contact.userLevel,
+      isSelf: isSelf,
+    );
     return ListTile(
       minLeadingWidth: 46,
       leading: Stack(
@@ -1415,6 +1867,7 @@ class _ContactTile extends StatelessWidget {
             child: Text(
               contactDisplayName(contact),
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: nameColor, fontWeight: FontWeight.w600),
             ),
           ),
           if (contact.isFavorite)
@@ -1423,9 +1876,9 @@ class _ContactTile extends StatelessWidget {
       ),
       subtitle: Text(
         [
-          if (group != null && group.isNotEmpty) group,
+          groupLabel,
           contact.userLevel.label,
-          contact.isTrusted ? '신뢰됨' : '미확인',
+          contact.isTrusted ? '신뢰O' : '신뢰X',
           'BLE',
           formatRelativeTime(contact.lastSeen),
         ].join(' · '),
@@ -1440,54 +1893,60 @@ class _ContactTile extends StatelessWidget {
           PopupMenuButton<_ContactAction>(
             tooltip: '연락처 메뉴',
             onSelected: onAction,
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                enabled: false,
-                child: Text(
-                  'Code: ${contactCode(contact)}',
-                  style: const TextStyle(fontSize: 11),
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: _ContactAction.toggleTrust,
-                child: Text(contact.isTrusted ? '신뢰 해제' : '신뢰 등록'),
-              ),
-              const PopupMenuItem(
-                value: _ContactAction.rename,
-                child: Text('이름 변경'),
-              ),
-              PopupMenuItem(
-                value: _ContactAction.toggleFavorite,
-                child: Text(contact.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'),
-              ),
-              const PopupMenuItem(
-                value: _ContactAction.setGroup,
-                child: Text('Group 추가 / 변경'),
-              ),
-              const PopupMenuItem(
-                value: _ContactAction.setAvatar,
-                child: Text('Avatar'),
-              ),
-              const PopupMenuItem(
-                value: _ContactAction.setLevel,
-                child: Text('Level'),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: _ContactAction.deleteMessages,
-                child: Text('Delete messages'),
-              ),
-              const PopupMenuItem(
-                value: _ContactAction.delete,
-                child: Text('삭제'),
-              ),
-            ],
+            itemBuilder: (context) => _contactMenuItems(isSelf),
           ),
         ],
       ),
       onTap: onTap,
     );
+  }
+
+  List<PopupMenuEntry<_ContactAction>> _contactMenuItems(bool isSelf) {
+    return [
+      PopupMenuItem(
+        enabled: false,
+        child: Text(
+          'Code: ${contactCode(contact)}',
+          style: const TextStyle(fontSize: 11),
+        ),
+      ),
+      const PopupMenuDivider(),
+      if (!isSelf)
+        PopupMenuItem(
+          value: _ContactAction.toggleTrust,
+          child: Text(contact.isTrusted ? '신뢰 해제' : '신뢰 등록'),
+        ),
+      const PopupMenuItem(value: _ContactAction.rename, child: Text('이름 변경')),
+      PopupMenuItem(
+        value: _ContactAction.toggleFavorite,
+        child: Text(contact.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'),
+      ),
+      const PopupMenuItem(
+        value: _ContactAction.setGroup,
+        child: Text('Group 추가 / 변경'),
+      ),
+      const PopupMenuItem(
+        value: _ContactAction.setAvatar,
+        child: Text('Avatar'),
+      ),
+      const PopupMenuItem(value: _ContactAction.setLevel, child: Text('Level')),
+      const PopupMenuDivider(),
+      const PopupMenuItem(
+        value: _ContactAction.deleteMessages,
+        child: Text('Delete messages'),
+      ),
+      if (!isSelf)
+        const PopupMenuItem(value: _ContactAction.delete, child: Text('삭제')),
+    ];
+  }
+
+  bool _isSelfContact(Contact contact) {
+    final myNodeId = IdentityService().myNodeId;
+    if (contact.nodeId.length != myNodeId.length) return false;
+    for (var i = 0; i < myNodeId.length; i++) {
+      if (contact.nodeId[i] != myNodeId[i]) return false;
+    }
+    return true;
   }
 
   IconData _deviceIcon(MeshDeviceType type) {
@@ -1540,6 +1999,7 @@ class _UnreadBadge extends StatelessWidget {
 
 class _ScanTreePreview extends StatelessWidget {
   final List<Contact> contacts;
+  final List<TopologyResponse> topologyResponses;
   final int depth;
   final bool isScanning;
   final String myName;
@@ -1548,9 +2008,12 @@ class _ScanTreePreview extends StatelessWidget {
   final ValueChanged<Contact> onOpenContact;
   final ValueChanged<Contact> onAddContact;
   final TextEditingController depthController;
+  final bool showNodeCounts;
+  final ValueChanged<bool> onShowNodeCountsChanged;
 
   const _ScanTreePreview({
     required this.contacts,
+    required this.topologyResponses,
     required this.depth,
     required this.isScanning,
     required this.myName,
@@ -1559,6 +2022,8 @@ class _ScanTreePreview extends StatelessWidget {
     required this.onOpenContact,
     required this.onAddContact,
     required this.depthController,
+    required this.showNodeCounts,
+    required this.onShowNodeCountsChanged,
   });
 
   @override
@@ -1570,6 +2035,8 @@ class _ScanTreePreview extends StatelessWidget {
           Positioned.fill(
             child: _ScanMapCard(
               contacts: contacts,
+              topologyResponses: topologyResponses,
+              depth: depth,
               isScanning: isScanning,
               myName: myName,
               myDeviceType: myDeviceType,
@@ -1577,6 +2044,8 @@ class _ScanTreePreview extends StatelessWidget {
               onOpenContact: onOpenContact,
               onAddContact: onAddContact,
               depthController: depthController,
+              showNodeCounts: showNodeCounts,
+              onShowNodeCountsChanged: onShowNodeCountsChanged,
             ),
           ),
           if (contacts.isEmpty)
@@ -1599,6 +2068,8 @@ class _ScanTreePreview extends StatelessWidget {
 
 class _ScanMapCard extends StatefulWidget {
   final List<Contact> contacts;
+  final List<TopologyResponse> topologyResponses;
+  final int depth;
   final bool isScanning;
   final String myName;
   final MeshDeviceType myDeviceType;
@@ -1606,9 +2077,13 @@ class _ScanMapCard extends StatefulWidget {
   final ValueChanged<Contact> onOpenContact;
   final ValueChanged<Contact> onAddContact;
   final TextEditingController depthController;
+  final bool showNodeCounts;
+  final ValueChanged<bool> onShowNodeCountsChanged;
 
   const _ScanMapCard({
     required this.contacts,
+    required this.topologyResponses,
+    required this.depth,
     required this.isScanning,
     required this.myName,
     required this.myDeviceType,
@@ -1616,6 +2091,8 @@ class _ScanMapCard extends StatefulWidget {
     required this.onOpenContact,
     required this.onAddContact,
     required this.depthController,
+    required this.showNodeCounts,
+    required this.onShowNodeCountsChanged,
   });
 
   @override
@@ -1623,10 +2100,6 @@ class _ScanMapCard extends StatefulWidget {
 }
 
 class _ScanMapCardState extends State<_ScanMapCard> {
-  static const _myColor = Colors.orangeAccent;
-  static const _knownColor = Color(0xFF9DDCFF);
-  static const _newColor = Colors.grey;
-
   _ScanMapNode? _selectedNode;
 
   @override
@@ -1638,8 +2111,9 @@ class _ScanMapCardState extends State<_ScanMapCard> {
           math.max(260, constraints.maxHeight - 34),
         );
         final visibleContacts = widget.contacts.take(40).toList();
-        final nodes = _buildNodes(visibleContacts, mapSize);
-        final edges = _buildEdges(visibleContacts.length);
+        final layout = _buildLayout(visibleContacts, mapSize);
+        final nodes = layout.nodes;
+        final edges = layout.edges;
         _ScanMapNode? selectedNode;
         if (_selectedNode != null) {
           for (final node in nodes) {
@@ -1679,10 +2153,11 @@ class _ScanMapCardState extends State<_ScanMapCard> {
                             ),
                             for (final node in nodes)
                               Positioned(
-                                left: node.position.dx - 24,
-                                top: node.position.dy - 22,
+                                left: node.position.dx - 27,
+                                top: node.position.dy - 25,
                                 child: _ScanMapNodeButton(
                                   node: node,
+                                  showConnectionCount: widget.showNodeCounts,
                                   onTap: () =>
                                       setState(() => _selectedNode = node),
                                 ),
@@ -1700,17 +2175,55 @@ class _ScanMapCardState extends State<_ScanMapCard> {
                 child: _ScanDepthBox(controller: widget.depthController),
               ),
               Positioned(
+                right: 12,
+                top: 12,
+                child: _ScanNodeBox(
+                  enabled: widget.showNodeCounts,
+                  onChanged: widget.onShowNodeCountsChanged,
+                ),
+              ),
+              Positioned(
                 left: 12,
                 bottom: 12,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    _ScanLegendDot(color: _myColor, label: 'Me'),
-                    SizedBox(height: 5),
-                    _ScanLegendDot(color: _knownColor, label: 'Known'),
-                    SizedBox(height: 5),
-                    _ScanLegendDot(color: _newColor, label: 'New'),
+                  children: [
+                    _ScanLegendDot(
+                      color: _roleColor(
+                        context,
+                        userLevel: widget.myUserLevel,
+                        isSelf: true,
+                      ),
+                      label: 'Me',
+                    ),
+                    const SizedBox(height: 5),
+                    _ScanLegendDot(
+                      color: _roleColor(
+                        context,
+                        userLevel: UserLevel.admin,
+                        isSelf: false,
+                      ),
+                      label: 'Admin+',
+                    ),
+                    const SizedBox(height: 5),
+                    _ScanLegendDot(
+                      color: _roleColor(
+                        context,
+                        userLevel: UserLevel.user,
+                        isSelf: false,
+                      ),
+                      label: 'User',
+                    ),
+                    const SizedBox(height: 5),
+                    _ScanLegendDot(
+                      color: _roleColor(
+                        context,
+                        userLevel: UserLevel.server,
+                        isSelf: false,
+                      ),
+                      label: 'Server',
+                    ),
                   ],
                 ),
               ),
@@ -1730,7 +2243,9 @@ class _ScanMapCardState extends State<_ScanMapCard> {
                             setState(() => _selectedNode = null);
                           }
                         : null,
-                    onChat: selectedNode.contact == null
+                    onChat:
+                        selectedNode.contact == null ||
+                            !selectedNode.contact!.userLevel.canSendMessages
                         ? null
                         : () {
                             setState(() => _selectedNode = null);
@@ -1745,6 +2260,261 @@ class _ScanMapCardState extends State<_ScanMapCard> {
     );
   }
 
+  _ScanMapLayout _buildLayout(List<Contact> visibleContacts, Size mapSize) {
+    final selfSummary = TopologyNodeSummary(
+      nodeId: IdentityService().myNodeId,
+      displayName: widget.myName.trim().isEmpty ? 'Me' : widget.myName.trim(),
+      deviceType: widget.myDeviceType,
+      userLevel: widget.myUserLevel,
+      transportKind: TransportKind.bluetooth,
+      isSaved: true,
+      lastSeen: DateTime.now().millisecondsSinceEpoch,
+    );
+    final graph = buildTopologyGraph(
+      self: selfSummary,
+      directContacts: visibleContacts,
+      responses: widget.topologyResponses,
+      depth: widget.depth,
+    );
+    final positions = _buildClusterPositions(graph, mapSize);
+    final center = Offset(mapSize.width / 2, mapSize.height / 2);
+    final maxDepth = math.max(
+      1,
+      graph.nodes.map((node) => node.depth).fold(0, math.max),
+    );
+    final maxRadius = math.min(mapSize.width, mapSize.height) * 0.38;
+    final groups = <int, List<TopologyGraphNode>>{};
+    for (final node in graph.nodes) {
+      groups.putIfAbsent(node.depth, () => []).add(node);
+    }
+
+    final scanNodes = <_ScanMapNode>[];
+    final indexById = <String, int>{};
+    for (final entry
+        in groups.entries.toList()
+          ..sort((left, right) => left.key.compareTo(right.key))) {
+      final ringDepth = entry.key;
+      final ringNodes = entry.value;
+      for (var i = 0; i < ringNodes.length; i++) {
+        final graphNode = ringNodes[i];
+        final isSelf = ringDepth == 0;
+        final angle =
+            -math.pi / 2 + (2 * math.pi * i / math.max(1, ringNodes.length));
+        final radius = isSelf ? 0.0 : maxRadius * ringDepth / maxDepth;
+        final position = Offset(
+          center.dx + math.cos(angle) * radius,
+          center.dy + math.sin(angle) * radius,
+        );
+        indexById[graphNode.id] = scanNodes.length;
+        scanNodes.add(
+          _ScanMapNode(
+            id: graphNode.id,
+            title: _graphNodeName(graphNode),
+            subtitle: [
+              _deviceLabel(graphNode.summary.deviceType),
+              'depth ${graphNode.depth}',
+              graphNode.contact?.isSaved ?? graphNode.summary.isSaved
+                  ? 'known'
+                  : 'new',
+              graphNode.summary.transportKind.label,
+            ].join(' · '),
+            position: positions[graphNode.id] ?? position,
+            deviceType: graphNode.summary.deviceType,
+            userLevel: graphNode.summary.userLevel,
+            connectionCount: graphNode.connectionCount,
+            isMe: isSelf,
+            isSavedContact:
+                graphNode.contact?.isSaved ?? graphNode.summary.isSaved,
+            isFavorite: graphNode.contact?.isFavorite ?? false,
+            contact: graphNode.contact,
+          ),
+        );
+      }
+    }
+
+    final scanEdges = <_ScanMapEdge>[];
+    for (final edge in graph.edges) {
+      final from = indexById[edge.fromId];
+      final to = indexById[edge.toId];
+      if (from == null || to == null) continue;
+      scanEdges.add(_ScanMapEdge(from, to, edge.transportKind));
+    }
+    return _ScanMapLayout(nodes: scanNodes, edges: scanEdges);
+  }
+
+  Map<String, Offset> _buildClusterPositions(
+    TopologyGraph graph,
+    Size mapSize,
+  ) {
+    if (graph.nodes.isEmpty) return const {};
+
+    final self = graph.nodes.firstWhere(
+      (node) => node.depth == 0,
+      orElse: () => graph.nodes.first,
+    );
+    final nodesById = {for (final node in graph.nodes) node.id: node};
+    final adjacency = <String, Set<String>>{};
+    for (final edge in graph.edges) {
+      adjacency.putIfAbsent(edge.fromId, () => <String>{}).add(edge.toId);
+      adjacency.putIfAbsent(edge.toId, () => <String>{}).add(edge.fromId);
+    }
+
+    final childrenById = <String, List<TopologyGraphNode>>{};
+    final orderedNodes =
+        graph.nodes.where((node) => node.id != self.id).toList()
+          ..sort((left, right) {
+            final depthOrder = left.depth.compareTo(right.depth);
+            if (depthOrder != 0) return depthOrder;
+            return _graphNodeName(left).compareTo(_graphNodeName(right));
+          });
+
+    for (final node in orderedNodes) {
+      final parentCandidates =
+          (adjacency[node.id] ?? const <String>{})
+              .where((id) => (nodesById[id]?.depth ?? 9999) == node.depth - 1)
+              .toList()
+            ..sort((left, right) {
+              final childOrder = (childrenById[left]?.length ?? 0).compareTo(
+                childrenById[right]?.length ?? 0,
+              );
+              if (childOrder != 0) return childOrder;
+              return _graphNodeName(
+                nodesById[left]!,
+              ).compareTo(_graphNodeName(nodesById[right]!));
+            });
+      final parentId = parentCandidates.isEmpty
+          ? self.id
+          : parentCandidates.first;
+      childrenById.putIfAbsent(parentId, () => []).add(node);
+    }
+
+    for (final children in childrenById.values) {
+      children.sort(
+        (left, right) => _graphNodeName(left).compareTo(_graphNodeName(right)),
+      );
+    }
+
+    final shortestSide = math.min(mapSize.width, mapSize.height);
+    final step = math.max(74.0, math.min(118.0, shortestSide * 0.18));
+    final rawPositions = <String, Offset>{self.id: Offset.zero};
+    final anglesById = <String, double>{self.id: -math.pi / 2};
+
+    late void Function(String parentId) placeChildren;
+    placeChildren = (String parentId) {
+      final children = childrenById[parentId] ?? const <TopologyGraphNode>[];
+      if (children.isEmpty) return;
+
+      final parentPosition = rawPositions[parentId] ?? Offset.zero;
+      final parentAngle = anglesById[parentId] ?? -math.pi / 2;
+      final isRoot = parentId == self.id;
+      final spread = isRoot ? 2 * math.pi : _childSpread(children.length);
+      final start = isRoot ? -math.pi / 2 : parentAngle - spread / 2;
+
+      for (var i = 0; i < children.length; i++) {
+        final child = children[i];
+        final angle = isRoot
+            ? start + (2 * math.pi * i / math.max(1, children.length))
+            : children.length == 1
+            ? _singleChildAngle(parentAngle, child)
+            : start + (spread * i / (children.length - 1));
+        rawPositions[child.id] =
+            parentPosition + Offset(math.cos(angle), math.sin(angle)) * step;
+        anglesById[child.id] = angle;
+        placeChildren(child.id);
+      }
+    };
+    placeChildren(self.id);
+
+    for (final node in graph.nodes) {
+      rawPositions.putIfAbsent(node.id, () => Offset.zero);
+    }
+
+    _relaxClusterPositions(rawPositions, fixedId: self.id);
+    return _fitClusterPositions(rawPositions, mapSize);
+  }
+
+  double _childSpread(int childCount) {
+    if (childCount <= 1) return 0;
+    if (childCount == 2) return math.pi / 2;
+    if (childCount == 3) return math.pi * 0.9;
+    if (childCount == 4) return math.pi * 1.1;
+    return math.pi * 1.35;
+  }
+
+  double _singleChildAngle(double parentAngle, TopologyGraphNode child) {
+    final turn = child.id.codeUnits.fold<int>(0, (sum, unit) => sum + unit);
+    final direction = (turn + child.depth).isEven ? 1.0 : -1.0;
+    return parentAngle + direction * math.pi / 3;
+  }
+
+  void _relaxClusterPositions(
+    Map<String, Offset> positions, {
+    required String fixedId,
+  }) {
+    const minDistance = 48.0;
+    final ids = positions.keys.toList();
+    for (var iteration = 0; iteration < 28; iteration++) {
+      for (var i = 0; i < ids.length; i++) {
+        for (var j = i + 1; j < ids.length; j++) {
+          final a = ids[i];
+          final b = ids[j];
+          final delta = positions[b]! - positions[a]!;
+          final distance = delta.distance;
+          if (distance <= 0 || distance >= minDistance) continue;
+          final push = delta / distance * ((minDistance - distance) * 0.18);
+          if (a != fixedId) positions[a] = positions[a]! - push;
+          if (b != fixedId) positions[b] = positions[b]! + push;
+        }
+      }
+    }
+  }
+
+  Map<String, Offset> _fitClusterPositions(
+    Map<String, Offset> rawPositions,
+    Size mapSize,
+  ) {
+    if (rawPositions.isEmpty) return const {};
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var maxX = -double.infinity;
+    var maxY = -double.infinity;
+    for (final position in rawPositions.values) {
+      minX = math.min(minX, position.dx);
+      minY = math.min(minY, position.dy);
+      maxX = math.max(maxX, position.dx);
+      maxY = math.max(maxY, position.dy);
+    }
+
+    const margin = 68.0;
+    final mapCenter = Offset(mapSize.width / 2, mapSize.height / 2);
+    final scaleCandidates = <double>[1.0];
+    if (maxX > 0) {
+      scaleCandidates.add((mapSize.width - mapCenter.dx - margin) / maxX);
+    }
+    if (minX < 0) scaleCandidates.add((mapCenter.dx - margin) / -minX);
+    if (maxY > 0) {
+      scaleCandidates.add((mapSize.height - mapCenter.dy - margin) / maxY);
+    }
+    if (minY < 0) scaleCandidates.add((mapCenter.dy - margin) / -minY);
+    final scale = scaleCandidates
+        .where((value) => value.isFinite && value > 0)
+        .fold<double>(1.0, math.min);
+
+    return {
+      for (final entry in rawPositions.entries)
+        entry.key: mapCenter + entry.value * scale,
+    };
+  }
+
+  String _graphNodeName(TopologyGraphNode node) {
+    final contact = node.contact;
+    if (contact != null) return contactDisplayName(contact);
+    final name = node.summary.displayName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return node.id.substring(0, math.min(8, node.id.length));
+  }
+
+  // ignore: unused_element
   List<_ScanMapNode> _buildNodes(List<Contact> visibleContacts, Size mapSize) {
     final center = Offset(mapSize.width / 2, mapSize.height / 2);
     final nodes = <_ScanMapNode>[
@@ -1797,8 +2567,12 @@ class _ScanMapCardState extends State<_ScanMapCard> {
     return nodes;
   }
 
+  // ignore: unused_element
   List<_ScanMapEdge> _buildEdges(int contactCount) {
-    return [for (var i = 0; i < contactCount; i++) _ScanMapEdge(0, i + 1)];
+    return [
+      for (var i = 0; i < contactCount; i++)
+        _ScanMapEdge(0, i + 1, TransportKind.bluetooth),
+    ];
   }
 
   String _deviceLabel(MeshDeviceType type) {
@@ -2035,7 +2809,8 @@ class _ScanMapCard extends StatelessWidget {
                           icon: const Icon(Icons.add_circle_outline),
                         ),
                       ],
-                      if (node.contact != null) ...[
+                      if (node.contact != null &&
+                          node.contact!.userLevel.canSendMessages) ...[
                         const SizedBox(width: 12),
                         IconButton(
                           tooltip: 'Chat',
@@ -2178,10 +2953,6 @@ class _ScanMapPainter extends CustomPainter {
 
     final center = nodes.first.position;
     final radius = math.min(size.width, size.height) * 0.34;
-    final linePaint = Paint()
-      ..color = scheme.outlineVariant.withAlpha(180)
-      ..strokeWidth = 1;
-
     if (isScanning) {
       final scanPaint = Paint()
         ..style = PaintingStyle.stroke
@@ -2194,11 +2965,46 @@ class _ScanMapPainter extends CustomPainter {
 
     for (final edge in edges) {
       if (edge.from >= nodes.length || edge.to >= nodes.length) continue;
+      final from = nodes[edge.from].position;
+      final to = nodes[edge.to].position;
+      final linePaint = _linePaint(edge.transportKind);
+      if (edge.transportKind == TransportKind.bluetooth) {
+        _drawDashedLine(canvas, from, to, linePaint);
+      } else {
+        canvas.drawLine(from, to, linePaint);
+      }
+    }
+  }
+
+  Paint _linePaint(TransportKind kind) {
+    return Paint()
+      ..color = scheme.outlineVariant.withAlpha(
+        kind == TransportKind.lan ? 220 : 180,
+      )
+      ..strokeWidth = switch (kind) {
+        TransportKind.lan => 2.8,
+        TransportKind.wifi => 1.5,
+        TransportKind.bluetooth => 1.2,
+      }
+      ..strokeCap = StrokeCap.round;
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset from, Offset to, Paint paint) {
+    final delta = to - from;
+    final distance = delta.distance;
+    if (distance == 0) return;
+    final direction = delta / distance;
+    const dash = 5.0;
+    const gap = 4.0;
+    var drawn = 0.0;
+    while (drawn < distance) {
+      final segmentEnd = math.min(drawn + dash, distance);
       canvas.drawLine(
-        nodes[edge.from].position,
-        nodes[edge.to].position,
-        linePaint,
+        from + direction * drawn,
+        from + direction * segmentEnd,
+        paint,
       );
+      drawn += dash + gap;
     }
   }
 
@@ -2237,6 +3043,13 @@ class _ScanMapNode {
     this.isFavorite = false,
     this.contact,
   });
+}
+
+class _ScanMapLayout {
+  final List<_ScanMapNode> nodes;
+  final List<_ScanMapEdge> edges;
+
+  const _ScanMapLayout({required this.nodes, required this.edges});
 }
 
 class _ScanLegendDot extends StatelessWidget {
@@ -2326,6 +3139,51 @@ class _ScanDepthBox extends StatelessWidget {
   }
 }
 
+class _ScanNodeBox extends StatelessWidget {
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  const _ScanNodeBox({required this.enabled, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(190),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(110)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(9, 8, 9, 7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Node',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            SizedBox(
+              width: 34,
+              height: 30,
+              child: Checkbox(
+                value: enabled,
+                onChanged: (value) => onChanged(value ?? false),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _NodeInfoLine extends StatelessWidget {
   final String label;
   final String value;
@@ -2357,70 +3215,270 @@ class _NodeInfoLine extends StatelessWidget {
 class _ScanMapEdge {
   final int from;
   final int to;
+  final TransportKind transportKind;
 
-  const _ScanMapEdge(this.from, this.to);
+  const _ScanMapEdge(this.from, this.to, this.transportKind);
 }
 
-class _ScanMapNodeButton extends StatelessWidget {
+class _ScanMapNodeButton extends StatefulWidget {
   final _ScanMapNode node;
+  final bool showConnectionCount;
   final VoidCallback onTap;
 
-  const _ScanMapNodeButton({required this.node, required this.onTap});
+  const _ScanMapNodeButton({
+    required this.node,
+    required this.showConnectionCount,
+    required this.onTap,
+  });
+
+  @override
+  State<_ScanMapNodeButton> createState() => _ScanMapNodeButtonState();
+}
+
+class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+
+  bool get _shouldPulse => !widget.node.isMe && !widget.node.isSavedContact;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1150),
+    );
+    _syncPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScanMapNodeButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncPulse();
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  void _syncPulse() {
+    if (_shouldPulse) {
+      if (!_pulseController.isAnimating) {
+        _pulseController.repeat();
+      }
+      return;
+    }
+    _pulseController.stop();
+    _pulseController.value = 0;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = node.isMe
-        ? Colors.orangeAccent
-        : node.isSavedContact
-        ? const Color(0xFF9DDCFF)
-        : Colors.grey;
-    final color = statusColor;
-    return Material(
-      color: Colors.transparent,
-      child: InkResponse(
-        radius: 24,
-        onTap: onTap,
-        child: SizedBox(
-          width: 48,
-          height: 44,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(_deviceIcon(node.deviceType), color: color, size: 25),
-              Positioned(
-                right: 2,
-                top: 7,
-                child: Text(
-                  node.connectionCount.toString(),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
+    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
+    final color = _roleColor(
+      context,
+      userLevel: widget.node.userLevel,
+      isSelf: widget.node.isMe,
+    );
+    return AnimatedBuilder(
+      animation: _pulseController,
+      builder: (context, child) {
+        final pulse = _shouldPulse ? _pulseController.value : 0.0;
+        final pulseAlpha = isDark ? 95 : 125;
+        final pulseWidth = isDark ? 0.85 : 1.0;
+        final iconColor = isDark ? color.withAlpha(225) : color;
+        return Material(
+          color: Colors.transparent,
+          child: InkResponse(
+            radius: 28,
+            onTap: widget.onTap,
+            child: SizedBox(
+              width: 54,
+              height: 50,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  if (_shouldPulse)
+                    Container(
+                      width: 26 + (18 * pulse),
+                      height: 26 + (18 * pulse),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: color.withAlpha(
+                            (pulseAlpha * (1 - pulse))
+                                .round()
+                                .clamp(18, pulseAlpha)
+                                .toInt(),
+                          ),
+                          width: pulseWidth,
+                        ),
+                      ),
+                    ),
+                  _ThinDeviceIcon(
+                    type: widget.node.deviceType,
+                    color: iconColor,
+                    size: 25,
+                    strokeWidth: isDark ? 1.35 : 1.45,
                   ),
-                ),
+                  if (widget.showConnectionCount)
+                    Positioned(
+                      right: 3,
+                      top: 9,
+                      child: Text(
+                        widget.node.connectionCount.toString(),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  if (widget.node.isFavorite)
+                    const Positioned(
+                      right: 2,
+                      bottom: 4,
+                      child: Icon(
+                        Icons.star_border,
+                        color: Colors.white70,
+                        size: 11,
+                      ),
+                    ),
+                ],
               ),
-              if (node.isFavorite)
-                const Positioned(
-                  right: 1,
-                  bottom: 3,
-                  child: Icon(
-                    Icons.star_border,
-                    color: Colors.white70,
-                    size: 11,
-                  ),
-                ),
-            ],
+            ),
           ),
+        );
+      },
+    );
+  }
+}
+
+class _ThinDeviceIcon extends StatelessWidget {
+  final MeshDeviceType type;
+  final Color color;
+  final double size;
+  final double strokeWidth;
+
+  const _ThinDeviceIcon({
+    required this.type,
+    required this.color,
+    required this.size,
+    required this.strokeWidth,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: size,
+      child: CustomPaint(
+        painter: _ThinDeviceIconPainter(
+          type: type,
+          color: color,
+          strokeWidth: strokeWidth,
         ),
       ),
     );
   }
+}
 
-  IconData _deviceIcon(MeshDeviceType type) {
-    return switch (type) {
-      MeshDeviceType.pc => Icons.computer_outlined,
-      MeshDeviceType.phone => Icons.phone_android_outlined,
-      MeshDeviceType.unknown => Icons.device_unknown_outlined,
-    };
+class _ThinDeviceIconPainter extends CustomPainter {
+  final MeshDeviceType type;
+  final Color color;
+  final double strokeWidth;
+
+  const _ThinDeviceIconPainter({
+    required this.type,
+    required this.color,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    switch (type) {
+      case MeshDeviceType.pc:
+        _paintPc(canvas, size, paint);
+      case MeshDeviceType.phone:
+        _paintPhone(canvas, size, paint);
+      case MeshDeviceType.unknown:
+        _paintUnknown(canvas, size, paint);
+    }
+  }
+
+  void _paintPc(Canvas canvas, Size size, Paint paint) {
+    final screen = Rect.fromLTWH(
+      size.width * 0.2,
+      size.height * 0.24,
+      size.width * 0.6,
+      size.height * 0.42,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(screen, Radius.circular(size.width * 0.04)),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.66),
+      Offset(size.width * 0.5, size.height * 0.78),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.33, size.height * 0.78),
+      Offset(size.width * 0.67, size.height * 0.78),
+      paint,
+    );
+  }
+
+  void _paintPhone(Canvas canvas, Size size, Paint paint) {
+    final body = Rect.fromLTWH(
+      size.width * 0.31,
+      size.height * 0.14,
+      size.width * 0.38,
+      size.height * 0.72,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(body, Radius.circular(size.width * 0.08)),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.43, size.height * 0.76),
+      Offset(size.width * 0.57, size.height * 0.76),
+      paint,
+    );
+  }
+
+  void _paintUnknown(Canvas canvas, Size size, Paint paint) {
+    final center = Offset(size.width / 2, size.height / 2);
+    canvas.drawCircle(center, size.width * 0.28, paint);
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: '?',
+        style: TextStyle(
+          color: color,
+          fontSize: size.width * 0.5,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThinDeviceIconPainter oldDelegate) {
+    return oldDelegate.type != type ||
+        oldDelegate.color != color ||
+        oldDelegate.strokeWidth != strokeWidth;
   }
 }
 
@@ -2551,8 +3609,10 @@ class _SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<_SettingsDialog> {
   late bool _darkMode;
+  late bool _demoMode;
   late String _avatarKey;
   late UserLevel _userLevel;
+  late MessageAlertMode _messageAlertMode;
   late final TextEditingController _nameController;
   late final TextEditingController _depthController;
 
@@ -2560,8 +3620,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   void initState() {
     super.initState();
     _darkMode = widget.initialSettings.darkMode;
+    _demoMode = widget.initialSettings.demoMode;
     _avatarKey = widget.initialSettings.avatarKey;
     _userLevel = widget.initialSettings.userLevel;
+    _messageAlertMode = widget.initialSettings.messageAlertMode;
     _nameController = TextEditingController(
       text: widget.initialSettings.displayName,
     );
@@ -2656,6 +3718,17 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                           },
                           title: const Text('Dark mode'),
                         ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: _demoMode,
+                          onChanged: (value) {
+                            setState(() => _demoMode = value);
+                            unawaited(
+                              AppSettingsService().save(_settingsFromFields()),
+                            );
+                          },
+                          title: const Text('Demo mode'),
+                        ),
                         const SizedBox(height: 8),
                         if (canChooseSelfLevel)
                           DropdownButtonFormField<UserLevel>(
@@ -2685,6 +3758,26 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                             ),
                             child: Text(_userLevel.label),
                           ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<MessageAlertMode>(
+                          initialValue: _messageAlertMode,
+                          decoration: const InputDecoration(
+                            labelText: '문자 알림',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: [
+                            for (final mode in MessageAlertMode.values)
+                              DropdownMenuItem(
+                                value: mode,
+                                child: Text(mode.label),
+                              ),
+                          ],
+                          onChanged: (mode) {
+                            if (mode != null) {
+                              setState(() => _messageAlertMode = mode);
+                            }
+                          },
+                        ),
                         const SizedBox(height: 8),
                         TextField(
                           controller: _nameController,
@@ -2811,10 +3904,12 @@ class _SettingsDialogState extends State<_SettingsDialog> {
 
     return AppSettings(
       darkMode: _darkMode,
+      demoMode: _demoMode,
       displayName: displayName.isEmpty ? 'Me' : displayName,
       avatarKey: _avatarKey,
       scanDefaultDepth: normalizedDepth,
       userLevel: _userLevel,
+      messageAlertMode: _messageAlertMode,
       lastShortNoticeAt: currentSettings.lastShortNoticeAt,
       lastLongNoticeAt: currentSettings.lastLongNoticeAt,
     );

@@ -7,6 +7,7 @@ import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
+import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
@@ -83,6 +84,20 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    if (!AppSettingsService().current.userLevel.canSendMessages ||
+        !widget.contact.userLevel.canSendMessages) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final message = !AppSettingsService().current.userLevel.canSendMessages
+            ? 'Server mode only relays messages. Chat is disabled.'
+            : '$_displayName is Server mode. Chat is disabled.';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+        Navigator.of(context).maybePop();
+      });
+      return;
+    }
     _loadHistory();
     _subscribeToStream();
     _historyRefreshTimer = Timer.periodic(
@@ -199,9 +214,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final message = _messageMode.isNotice
             ? '공지는 50자 이내, 종류별 하루 1회만 보낼 수 있습니다.'
             : '연결된 BLE 이웃이 없어 전송하지 못했습니다.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -210,6 +225,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
