@@ -1,6 +1,7 @@
 // lib/ui/chat/chat_screen.dart
 
 import 'dart:async';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
@@ -8,6 +9,7 @@ import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
@@ -79,6 +81,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _historyRefreshTimer;
 
   StreamSubscription<ReceivedMessage>? _msgSubscription;
+  StreamSubscription<TransferEvent>? _transferSubscription;
+
+  // 진행 중인 전송: tid → 진행률 (0.0~1.0) 및 메타
+  final Map<String, _ActiveTransfer> _activeTransfers = {};
 
   // ── 라이프사이클 ─────────────────────────────────────────────────────────────
 
@@ -104,6 +110,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _loadHistory();
     _subscribeToStream();
+    _subscribeToTransfers();
     _historyRefreshTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _loadHistory(replace: true),
@@ -114,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _msgSubscription?.cancel();
+    _transferSubscription?.cancel();
     _historyRefreshTimer?.cancel();
     _controller.dispose();
     _inputFocusNode.dispose();
@@ -180,6 +188,90 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.contact.nodeId,
       IdentityService().myNodeId,
     );
+  }
+
+  void _subscribeToTransfers() {
+    final targetHex = widget.contact.nodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    _transferSubscription = MessagingService().transferStream.listen((event) {
+      if (!mounted) return;
+      // 이 연락처와 관련된 전송만 처리
+      final transfer = _activeTransfers[event.tid];
+      final isOurs = transfer != null ||
+          (event is TransferStarted &&
+              (event.direction == TransferDirection.outgoing
+                  ? true
+                  : event.meta.tid.isNotEmpty));
+      if (!isOurs && event is! TransferStarted) return;
+
+      setState(() {
+        switch (event) {
+          case TransferStarted():
+            _activeTransfers[event.tid] = _ActiveTransfer(
+              meta: event.meta,
+              progress: 0,
+              direction: event.direction,
+              targetNodeIdHex: targetHex,
+            );
+          case TransferProgress():
+            _activeTransfers[event.tid]?.progress = event.progress;
+          case TransferCompleted():
+            _activeTransfers.remove(event.tid);
+          case TransferFailed():
+            _activeTransfers.remove(event.tid);
+        }
+      });
+    });
+  }
+
+  // ── 첨부 전송 ─────────────────────────────────────────────────────────────────
+
+  Future<void> _pickAndSendFile() async {
+    const typeGroup = XTypeGroup(label: 'files');
+    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+    if (file == null) return;
+
+    final data = await file.readAsBytes();
+    final targetHex = widget.contact.nodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+
+    if (!mounted) return;
+    await MessagingService().sendFile(
+      data: Uint8List.fromList(data),
+      fileName: file.name,
+      mimeType: 'application/octet-stream',
+      targetNodeIdHex: targetHex,
+      kind: TransferKind.file,
+    );
+  }
+
+  Future<void> _pickAndSendImages() async {
+    const imageTypes = XTypeGroup(
+      label: 'images',
+      extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'],
+    );
+    final files = await openFiles(acceptedTypeGroups: [imageTypes]);
+    if (files.isEmpty) return;
+
+    final limited = files.take(10).toList();
+    final targetHex = widget.contact.nodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+
+    for (var i = 0; i < limited.length; i++) {
+      if (!mounted) return;
+      final data = await limited[i].readAsBytes();
+      await MessagingService().sendFile(
+        data: Uint8List.fromList(data),
+        fileName: limited[i].name,
+        mimeType: 'image/jpeg',
+        targetNodeIdHex: targetHex,
+        kind: TransferKind.image,
+        imageIndex: i,
+      );
+    }
   }
 
   // ── 전송 ─────────────────────────────────────────────────────────────────────
@@ -296,6 +388,8 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           // 미확인 연락처 경고 배너
           if (!widget.contact.isTrusted) _buildWarningBanner(),
+          // 파일 전송 진행률 배너
+          if (_activeTransfers.isNotEmpty) _buildTransferBanner(),
           // 메시지 목록
           Expanded(child: _buildMessageList()),
           // 입력바
@@ -393,6 +487,66 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── 전송 진행률 배너 ──────────────────────────────────────────────────────────
+
+  Widget _buildTransferBanner() {
+    return Container(
+      color: const Color(0xFF1A1A2E),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: _activeTransfers.values.map((t) {
+          final isOut = t.direction == TransferDirection.outgoing;
+          final label = isOut ? '전송 중' : '수신 중';
+          final icon = t.meta.kind == TransferKind.image
+              ? Icons.image_outlined
+              : Icons.insert_drive_file_outlined;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(icon, size: 14, color: const Color(0xFF9E9EB8)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$label: ${t.meta.fileName}',
+                        style: const TextStyle(
+                          color: Color(0xFF9E9EB8),
+                          fontSize: 11,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      LinearProgressIndicator(
+                        value: t.progress,
+                        backgroundColor: const Color(0xFF2A2A3E),
+                        color: isOut
+                            ? const Color(0xFF7C6AF7)
+                            : const Color(0xFF4ADE80),
+                        minHeight: 3,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${(t.progress * 100).toInt()}%',
+                  style: const TextStyle(
+                    color: Color(0xFF9E9EB8),
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -517,6 +671,44 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // 첨부 버튼
+            PopupMenuButton<String>(
+              icon: const Icon(
+                Icons.attach_file_rounded,
+                size: 22,
+                color: Color(0xFF9E9EB8),
+              ),
+              tooltip: '파일/이미지 전송',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              onSelected: (value) {
+                if (value == 'file') _pickAndSendFile();
+                if (value == 'image') _pickAndSendImages();
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'file',
+                  child: Row(
+                    children: [
+                      Icon(Icons.insert_drive_file_outlined, size: 18),
+                      SizedBox(width: 8),
+                      Text('파일 전송 (1개)'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'image',
+                  child: Row(
+                    children: [
+                      Icon(Icons.image_outlined, size: 18),
+                      SizedBox(width: 8),
+                      Text('이미지 전송 (최대 10개)'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 4),
             Container(
               width: 92,
               margin: const EdgeInsets.only(right: 8),
@@ -663,4 +855,20 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+}
+
+// ── 전송 진행 상태 모델 ─────────────────────────────────────────────────────────
+
+class _ActiveTransfer {
+  final TransferMeta meta;
+  double progress;
+  final TransferDirection direction;
+  final String targetNodeIdHex;
+
+  _ActiveTransfer({
+    required this.meta,
+    required this.progress,
+    required this.direction,
+    required this.targetNodeIdHex,
+  });
 }

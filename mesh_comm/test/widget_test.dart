@@ -154,7 +154,7 @@ void main() {
 
   test('transport and attachment policies expose current limits', () {
     expect(TransportKind.bluetooth.implementedForMessages, isTrue);
-    expect(TransportKind.lan.implementedForMessages, isFalse);
+    expect(TransportKind.lan.implementedForMessages, isTrue);
     expect(TransportKind.wifi.implementedForMessages, isFalse);
 
     expect(MessageAttachmentPolicy.maxImagesPerMessage, 10);

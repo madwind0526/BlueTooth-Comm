@@ -2119,7 +2119,10 @@ class _FilterRail extends StatelessWidget {
             onPressed: onExport,
           ),
           const Spacer(),
-          _ConnectionBadge(bleService: BleService()),
+          _ConnectionBadge(
+            bleService: BleService(),
+            messagingService: MessagingService(),
+          ),
           const SizedBox(height: 8),
         ],
       ),
@@ -4208,24 +4211,44 @@ class _GroupTile extends StatelessWidget {
 
 class _ConnectionBadge extends StatelessWidget {
   final BleService bleService;
+  final MessagingService messagingService;
 
-  const _ConnectionBadge({required this.bleService});
+  const _ConnectionBadge({
+    required this.bleService,
+    required this.messagingService,
+  });
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<String>>(
       stream: bleService.connectedDevicesStream,
       initialData: bleService.connectedDeviceIds,
-      builder: (context, snapshot) {
-        final count = snapshot.data?.length ?? 0;
-        final color = count == 0 ? Colors.redAccent : Colors.greenAccent;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.circle, size: 9, color: color),
-            const SizedBox(height: 3),
-            Text('$count 연결', style: TextStyle(color: color, fontSize: 9)),
-          ],
+      builder: (context, bleSnap) {
+        return StreamBuilder<List<String>>(
+          stream: messagingService.lanPeersStream,
+          initialData: const [],
+          builder: (context, lanSnap) {
+            final bleCount = bleSnap.data?.length ?? 0;
+            final lanCount = lanSnap.data?.length ?? 0;
+            final total = bleCount + lanCount;
+            final color = total == 0 ? Colors.redAccent : Colors.greenAccent;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.circle, size: 9, color: color),
+                const SizedBox(height: 3),
+                Text(
+                  '$total 연결',
+                  style: TextStyle(color: color, fontSize: 9),
+                ),
+                if (lanCount > 0)
+                  Text(
+                    'LAN $lanCount',
+                    style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8),
+                  ),
+              ],
+            );
+          },
         );
       },
     );

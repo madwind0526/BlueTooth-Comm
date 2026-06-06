@@ -849,3 +849,110 @@
 ### 📋 다음 단계
 
 -->
+
+---
+
+<!-- ================================================================ -->
+## 2026-06-07 — 3-에이전트 전체 코드베이스 리뷰 (v1.0.Q)
+
+> 보안/암호화, BLE/메시징/DB, UI/정책 3개 독립 에이전트 병렬 리뷰
+> Critical + High 항목만 기록. 수정은 별도 Wave에서 진행.
+
+### 요약
+
+| 구분 | Critical | High |
+|------|---------|------|
+| 보안/암호화 | 3 | 4 |
+| BLE/메시징/DB | 4 | 5 |
+| UI/정책 | 2 | 4 |
+| **합계** | **9** | **13** |
+
+---
+
+### [보안/암호화] Critical
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| SC-1 | `identity_service.dart:67–73`<br>`database_service.dart:192–199` | **개인키 평문 저장**: Ed25519 seed와 X25519 private key가 암호화 없이 SQLite BLOB으로 저장됨. 코드에 `TODO: seed 저장 전 암호화 적용 (Phase 2)` 주석이 있으나 미구현 | 기기 루팅·로컬 DB 접근 시 모든 메시지를 복호화하고 발신자로 위장(서명 위조) 가능 | `identity_backup_service.dart`의 PBKDF2+AES-GCM 패턴을 재사용하여 Android Keystore(또는 Flutter Secure Storage)로 파생한 키로 DB 저장 전 seed 암호화 |
+| SC-2 | `contact_file_service.dart:42–72` | **연락처 JSON 가져오기 — nodeId 무결성 미검증**: `importFromJson`이 `nodeId`와 `publicKey`를 독립 hex로 수용하고 `SHA-256(publicKey)[0:16] == nodeId` 검증 없음. QR 파싱은 동일 검증을 수행하나 파일 import는 생략 | 공격자가 조작된 `.json` 파일을 배포하여 임의 nodeId에 신뢰 상태(`isTrusted:true`) + 높은 `userLevel` 설정 가능 → LEVEL_CHANGE 수신 시 권한 상승 | `_fromHex(item['nodeId'])` 직후 `crypto.nodeIdFromPublicKey(publicKey)`와 바이트 비교 추가; `trusted` 필드는 파일에서 읽지 않고 항상 `false`로 고정 |
+| SC-3 | `contact_file_service.dart:55, 64`<br>`database_service.dart:247–269` | **JSON 가져오기가 `isTrusted:true`를 그대로 주입**: `trusted: trusted` (line 64)로 JSON 값을 신뢰 플래그에 직접 사용. 조작된 파일로 TOFU 우회 가능 | TOFU 핑거프린트 직접 확인 없이 신뢰 상태 설정 → 암호화 키 교환 없이 메시지 수신 신뢰 표시 | `importFromJson`에서 `trusted` 필드 무시, 항상 `trusted: false` 전달; 신뢰는 QR 스캔 또는 `confirmTrust()` 경로로만 가능하도록 강제 |
+
+### [보안/암호화] High
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| SH-1 | `crypto_service.dart:140–158`<br>`messaging_service.dart:288–294` | **X25519 raw output → AES-256 직접 사용 (KDF 누락)**: `computeSharedSecret`이 반환한 32 byte DH 출력을 KDF 없이 곧바로 `SecretKey`로 사용. NIST SP 800-56A / RFC 7748은 반드시 KDF(HKDF-SHA256 등) 적용을 요구 | 약한 키 재료 사용 → AES-GCM 키가 균일 랜덤이 아닐 경우 키 구분 공격(key distinguishing) 위험 | `computeSharedSecret` 결과에 `HKDF-SHA256(salt=senderNodeId‖recipientNodeId, ikm=sharedSecret, info="mesh_comm_e2e")` 적용 후 AES 키로 사용 |
+| SH-2 | `messaging_service.dart:540–572, 819–821` | **브로드캐스트 notice TEXT 평문 전송**: `_sendLongNoticeBroadcast`가 평문 UTF-8/JSON payload를 직접 사용. 수신측은 `packet.isBroadcast`이면 payload를 그대로 plaintext로 처리 | 네트워크 경로의 모든 릴레이 노드(R-14 위반)가 long-notice 메시지 내용을 평문으로 열람 가능 | 브로드캐스트 텍스트에도 그룹 키 또는 정책 명시; 최소한 UI에 경고 추가 |
+| SH-3 | `database_service.dart:27, 633–649` | **30분 seen_messages TTL — 재전송 공격 창**: msg_id 중복 차단이 30분 후 만료되므로 동일 msg_id 패킷을 30분 이상 후 재전송하면 재처리됨 | 오래된 서명된 패킷을 재전송하여 메시지 중복 수신·릴레이 루프 유발 가능 | 패킷 헤더의 `timestamp`를 수신 시각과 비교하여 허용 창(예: ±5분) 초과 시 폐기; TEXT·KEY_ANNOUNCE에 미적용된 timestamp 검사 추가 |
+| SH-4 | `messaging_service.dart:1059–1079` | **LEVEL_CHANGE 권한 검사가 발신자의 로컬 DB 등록 레벨 기준**: SC-2/SC-3 취약점이 결합되면 import된 신뢰 연락처가 `creator` 레벨로 등록될 수 있어 자신의 레벨을 강제 변경당할 수 있음 | 네트워크 공격자 또는 조작된 백업 파일로 `userLevel`을 `creator`로 상향 → notice 쿨다운 우회, 연락처 레벨 변경 권한 획득 | SH-3의 timestamp 검사 + SC-2/SC-3 수정으로 연동 방어; LEVEL_CHANGE 처리 전 발신자 레벨의 출처(QR 인증 vs. KEY_ANNOUNCE) 구분 플래그 도입 권장 |
+
+---
+
+### [BLE/메시징/DB] Critical
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| BC-1 | `ble_service.dart:542–554` | **GATT 연결 실패 시 disconnect 미호출**: `discoverServices` 등 예외 발생 시 `_connectToDevice`가 `_connectedDevices`에 등록하지 않은 채 리턴하지만 OS-level BLE 연결은 유지됨. `connectionState` 리스너도 없으므로 GATT 슬롯이 영구 leak | BLE GATT 슬롯 고갈 → 신규 연결 전부 실패. Android 재부팅 전까지 복구 불가 | `catch` 블록에서 `await device.disconnect()` 호출 추가; `finally`에서 `_connectedDevices`에 없으면 disconnect |
+| BC-2 | `ble_service.dart:721–744` | **Heartbeat timeout 후 disconnect가 비동기로 처리되어 다음 틱에 중복 호출**: `disconnect()` 직후에도 `connectedDeviceIds`에 기기가 잔류하여 다음 heartbeat 틱에서 동일 기기에 disconnect 반복 호출 | disconnect 다중 호출 → BLE 스택 혼란, 재연결 로직과 충돌 가능 | `disconnect()` 호출 직전에 `_heartbeatMissed.remove(deviceId)` 및 `_connectedDevices.remove(deviceId)` 선제 정리 |
+| BC-3 | `messaging_service.dart:757–781` | **TTL 체크가 패킷 처리 이후에 실행됨**: TTL=0 패킷도 핸들러가 모두 실행됨. 특히 PONG(TTL=0 설계)에 `ttl -= 1` 후 `-1`이 되어 relay 조건을 통과하여 **PONG flooding** 발생 가능 | PONG 패킷이 예상치 못하게 relay됨 → 메시 네트워크 내 flooding | TTL 체크를 `ttl -= 1` 이전에 수행; PONG은 msg_type 기반으로 relay 자체를 막음 |
+| BC-4 | `ble_fragment_codec.dart:106–116` | **fragment reassembly 30초 만료 시 상위 레이어에 실패 통지 없음**: 느린 연결에서 불완전 어셈블리가 30초 후 소리 없이 drop되며 `null` 반환 외 아무 경고 없음 | 긴 메시지 무음 유실. 상위 레이어가 재전송 불가 → 중요 메시지 손실 | reassembly timeout 시 상위 레이어에 실패 콜백 제공; 경고 로그 추가 |
+
+### [BLE/메시징/DB] High
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| BH-1 | `ble_service.dart:189–247` | **재스캔 익명 Timer 누수**: `startScan()` 예외 중단 시 15초 딜레이 익명 Timer가 `_scanTimer`에 저장되지 않아 `stopScan()` 후에도 취소되지 않음 | dispose 후 스캔 재시작 → 닫힌 StreamController에 접근 → `Bad state: Cannot add event after close` 크래시 | 15초 딜레이 타이머를 `_scanTimer`에 저장; 또는 dispose 완료 플래그 검사 |
+| BH-2 | `ble_service.dart:528` | **`lastValueStream` 사용으로 stale notify 재처리**: `lastValueStream`은 이전 세션의 캐시값을 즉시 replay함. 연결 시 오래된 데이터가 `_handleIncomingBytes`로 전달될 수 있음 | 이전 세션의 stale 패킷이 재처리 → 중복 메시지 표시 또는 seen_messages 캐시 오염 | `lastValueStream` → `onValueReceived`로 변경 |
+| BH-3 | `database_service.dart:124–178` | **DB 업그레이드 경로에 `seen_messages` 테이블 생성 누락**: `_onUpgrade`에서 `seen_messages` 테이블 생성 구문이 없어 v1에서 직접 업그레이드 시 테이블 미생성 | 구버전 앱 사용자 업그레이드 시 `no such table: seen_messages` 예외 → 앱 크래시 또는 중복 방지 기능 완전 비활성화 | `_onUpgrade`의 적절한 버전 구간에 `CREATE TABLE IF NOT EXISTS seen_messages (...)` 추가 |
+| BH-4 | `messaging_service.dart:699–732` | **`isMessageSeen()` async 조회 사이 동일 패킷 중복 처리**: 거의 동시 도착한 동일 msg_id 패킷 두 개가 모두 `isMessageSeen() = false`를 받아 `_messageStreamController.add()` 두 번 emit | 사용자에게 동일 메시지가 두 번 표시될 수 있음 | `markMessageSeen()`을 가능한 일찍 호출하거나 Dart 레벨 in-memory Set으로 선제 dedup |
+| BH-5 | `ble_service.dart:309–317` | **disconnect 직후 pending 전송들이 불필요한 실패-disconnect 루프**: `sendPacket()` 큐에 pending된 Future들이 disconnect 이후에도 `_sendPacketNow`를 실행하여 `_recordSendFailure` → 이미 없는 기기에 `disconnect()` 재호출 | disconnect 직후 로그 오염 및 타이밍에 따라 재연결 로직과 충돌 가능 | `disconnect()` 시 deviceId를 "disconnecting" Set에 추가하여 후속 `_recordSendFailure` 무시 |
+
+---
+
+### [UI/정책] Critical
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| UC-1 | `chat_screen.dart:127–148` | **채팅 히스토리 중복 표시 버그**: 초기 `_loadHistory(replace:false)` 후 스트림으로 수신된 메시지가 1분 후 `_loadHistory(replace:true)` 호출 시 DB에서 다시 addAll되어 중복 표시 | 수신 메시지가 채팅창에 2개씩 표시됨. 재현: 채팅 화면 열어둔 상태에서 메시지 수신 후 1분 경과 | `_loadHistory` 내부에서 msgId 기준 dedup(Map) 처리; 또는 타이머 제거하고 스트림만 사용 |
+| UC-2 | `home_screen.dart:4354–4374` | **설정 저장 race condition**: Dark/Demo 스위치 `onChanged`에서 `unawaited`로 `save()` 호출 시 이전 save가 완료되기 전에 `_settingsFromFields()`가 이전 값을 읽어 덮어쓸 수 있음 | 설정 값 유실 가능성. Dark/Demo 중 하나가 저장되지 않을 수 있음 | Save 버튼 클릭 시에만 `_settingsFromFields()`로 한 번에 저장; 중간 상태는 dialog local state로만 관리 |
+
+### [UI/정책] High
+
+| ID | 파일:라인 | 설명 | 영향 | 수정 방향 |
+|---|---|---|---|---|
+| UH-1 | `qr_screen.dart:252–260` | **QR 스캔 시 상대방이 자신을 `server`로 위장 가능**: QR에 `"userLevel":"server"`를 넣으면 스캔한 상대방 DB에 server 레벨로 등록되어 채팅이 `canOpenChatWithContact` 정책에 의해 차단됨 | 공격자가 server로 위장한 QR을 찍히게 함으로써 피해자와의 채팅을 DoS로 차단 가능 | QR 경유 add 시에는 항상 `UserLevel.user`로 고정; 레벨은 관리자가 수동으로만 변경 |
+| UH-2 | `chat_screen.dart:86–104` | **Server mode 차단 경로에서 `await maybePop()` 후 `mounted` 재확인 없음**: dispose된 위젯에서 `setState` 호출 가능성 | `setState after dispose` 예외 발생 위험 | `maybePop()` await 이후 `if (!mounted) return;` 추가 |
+| UH-3 | `virtual_mesh_simulator.dart:248–279` | **데모 화면 재진입 시 notice cooldown 리셋**: `VirtualMeshNode` 재생성으로 `lastShortNoticeAt=0` 초기화 → cooldown 우회 가능 | 데모 모드의 notice cooldown 정책이 화면 재진입으로 우회됨. 사용자에게 실제 cooldown 동작을 잘못 학습시킬 수 있음 | `VirtualMeshSimulator`를 HomeScreen 레벨에서 유지하여 화면 이동에도 인스턴스가 유지되도록 함 |
+| UH-4 | `app_settings_service.dart:19–23`<br>`main.dart:59–62` | **Windows Creator 레벨 적용 전 `_emit()` 발화**: `load()` 이후 Windows 조건으로 레벨을 creator로 수정 전에 settingsStream 구독자가 이전 값을 받아 `_MeshCommAppState._settings`에 old level이 남음 | Windows에서 UI에 creator 레벨이 표시되지 않을 수 있음; 설정 dialog에서 잘못된 level 초기값 표시 | `save(notify:false)` → `save(notify:true)`로 변경; 또는 구독자 등록을 Windows 레벨 수정 이후로 순서 조정 |
+
+---
+
+### 잘 된 점
+
+| 항목 | 근거 |
+|---|---|
+| KEY_ANNOUNCE 서명 검증 파이프라인 | `_resolveSenderPublicKey` → `verifyPacketSignature` → 처리 순서가 일관되게 지켜지며, 서명 검증 성공 후에만 `markMessageSeen`을 기록하여 위조 패킷을 통한 DoS를 방지 |
+| 백업 암호화 품질 | PBKDF2-HMAC-SHA256 210,000회 반복, 16 byte 랜덤 salt, AES-GCM-256 — 현대적 백업 암호화 기준 충족 |
+| nodeId 결정적 바인딩(R-06) | QR 파싱·KEY_ANNOUNCE 파싱 모두 `SHA-256(publicKey)[0:16] == senderId` 검증으로 node_id 위조를 원천 차단(파일 import 경로 제외 — SC-2) |
+| fragment reassembler 자동 만료 | `_cleanExpired()`가 `add()` 호출마다 실행되어 불완전 어셈블리 30초 후 자동 정리; `removeDevice()`로 연결 끊김 시 버퍼 즉시 해제 |
+| dispose() 일관성 | `HomeScreen`과 `ChatScreen` 모두 StreamSubscription, Timer, Controller를 dispose()에서 빠짐없이 취소/해제; `mounted` 가드도 광범위하게 적용 |
+| Server mode 채팅 차단 이중화 | `HomeScreen._openChat`과 `ChatScreen.initState` 양쪽에서 독립적으로 `canSendMessages` 체크 수행 |
+| QR TOFU 플로우 | QR 스캔 → `addOrUpdateContact`(미확인) → `_showFingerprintDialog` → `confirmTrust` 순서로 올바르게 구현됨 |
+
+---
+
+### 우선순위 액션 플랜
+
+| 우선순위 | ID | 작업 |
+|---|---|---|
+| P1 (즉시) | BC-3 | TTL 체크를 처리 전으로 이동; PONG relay 차단 |
+| P1 (즉시) | BH-2 | `lastValueStream` → `onValueReceived` 교체 |
+| P1 (즉시) | UC-1 | 채팅 히스토리 중복 표시 버그 수정 |
+| P1 (즉시) | SC-2, SC-3 | JSON import에서 nodeId 검증 + trusted 강제 false |
+| P2 (단기) | BC-1 | GATT 연결 실패 시 disconnect 추가 |
+| P2 (단기) | BC-2 | Heartbeat disconnect 선제 정리 |
+| P2 (단기) | UH-1 | QR 경유 userLevel 고정 |
+| P2 (단기) | UH-4 | Windows Creator 레벨 적용 순서 수정 |
+| P3 (중기) | SC-1 | 개인키 암호화 저장 (큰 작업) |
+| P3 (중기) | SH-1 | HKDF 적용 |
+| P3 (중기) | BH-3 | DB 업그레이드 seen_messages 테이블 추가 |

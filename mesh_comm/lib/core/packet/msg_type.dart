@@ -27,7 +27,16 @@ enum MsgType {
   topologyRequest(0x07),
 
   /// SCAN topology response containing one node's direct neighbor summary.
-  topologyResponse(0x08);
+  topologyResponse(0x08),
+
+  /// 파일/이미지 전송 시작 메타데이터 (이름·크기·청크 수·전송 ID).
+  fileHeader(0x09),
+
+  /// 파일/이미지 청크 데이터 (전송 ID + 청크 인덱스 + 바이너리).
+  fileChunk(0x0A),
+
+  /// 파일/이미지 청크 수신 확인 (전송 ID + 청크 인덱스 + 성공 여부).
+  fileAck(0x0B);
 
   final int value;
   const MsgType(this.value);

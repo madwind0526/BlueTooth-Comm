@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:mesh_comm/core/ble/ble_service.dart';
 import 'package:mesh_comm/core/crypto/crypto_service.dart';
 import 'package:mesh_comm/core/diagnostics/diagnostic_config.dart';
+import 'package:mesh_comm/core/lan/lan_service.dart';
 import 'package:mesh_comm/core/packet/mesh_packet.dart';
 import 'package:mesh_comm/core/packet/msg_type.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
@@ -15,6 +16,8 @@ import 'package:mesh_comm/features/contacts/contact_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_model.dart';
+import 'package:mesh_comm/features/transfer/transfer_service.dart';
 
 import 'message_policy.dart';
 import 'topology_message.dart';
@@ -119,6 +122,8 @@ class MessagingService {
 
   // ── 의존성 ──────────────────────────────────────────────────────────────────
   final _ble = BleService();
+  final _lan = LanService();
+  final _transfer = TransferService();
   final _crypto = CryptoService();
   final _db = DatabaseService();
   final _identity = IdentityService();
@@ -133,6 +138,7 @@ class MessagingService {
   final Set<String> _keyAnnounceRespondedNodeIds = {};
   final Map<String, int> _topologyRequestsHandledAt = {};
   StreamSubscription<List<String>>? _connectionSubscription;
+  StreamSubscription<List<String>>? _lanConnectionSubscription;
   Set<String> _knownBleDeviceIds = {};
 
   // seen_messages 정리 타이머 (R-09: 30분 주기)
@@ -159,6 +165,15 @@ class MessagingService {
   /// SCAN topology responses from reachable nodes.
   Stream<TopologyResponse> get topologyStream =>
       _topologyStreamController.stream;
+
+  /// 현재 연결된 LAN 피어 수.
+  int get lanConnectedCount => _lan.connectedCount;
+
+  /// LAN 피어 목록 변경 스트림 (UI 업데이트용).
+  Stream<List<String>> get lanPeersStream => _lan.connectedPeersStream;
+
+  /// 파일/이미지 전송 이벤트 스트림.
+  Stream<TransferEvent> get transferStream => _transfer.transferStream;
 
   // ── 초기화 ───────────────────────────────────────────────────────────────────
 
@@ -200,6 +215,18 @@ class MessagingService {
       _handleConnectedDevices,
     );
     _ble.startHeartbeat(_createPingPacket);
+
+    // LAN 서비스 초기화 및 피어 변경 구독
+    await _lan.init(
+      myNodeId: _identity.myNodeId,
+      onPacketReceived: (packet, peerId) {
+        handleIncomingPacket(packet, peerId);
+      },
+    );
+    _lanConnectionSubscription = _lan.connectedPeersStream.listen((_) {});
+
+    // TransferService 초기화
+    _transfer.init(sendPacket: _sendPacketToNodeId);
 
     // KEY_ANNOUNCE 즉시 브로드캐스트 (R-10)
     await broadcastKeyAnnounce();
@@ -618,6 +645,9 @@ class MessagingService {
     MeshPacket packet, {
     String? excludeDeviceId,
   }) async {
+    // LAN 브로드캐스트 (dedup은 seen_messages에서 처리됨)
+    unawaited(_lan.broadcastPacket(packet));
+
     var recipientCount = 0;
     for (var attempt = 0; attempt < 3; attempt++) {
       recipientCount = await _ble.broadcastPacket(
@@ -633,10 +663,45 @@ class MessagingService {
   Future<void> broadcastKeyAnnounce() async {
     try {
       final packet = await _identity.createKeyAnnouncePacket();
+      unawaited(_lan.broadcastPacket(packet));
       final recipientCount = await _ble.broadcastPacket(packet);
-      _log('KEY_ANNOUNCE 브로드캐스트 완료: $recipientCount개 이웃');
+      _log('KEY_ANNOUNCE 브로드캐스트 완료: $recipientCount개 이웃 (LAN 포함)');
     } catch (e) {
       _log('broadcastKeyAnnounce 오류: $e');
+    }
+  }
+
+  /// 특정 nodeIdHex에게 직접 패킷을 전송한다. LAN 우선, 없으면 BLE.
+  Future<void> _sendPacketToNodeId(MeshPacket packet, String targetNodeIdHex) async {
+    final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
+    if (!lanSent) {
+      // BLE는 deviceId(MAC)로 전송하므로 nodeIdHex → contactService에서 매핑 필요.
+      // 현재는 broadcastPacket으로 폴백한다 (seen_messages dedup으로 중복 방지).
+      await _ble.broadcastPacket(packet);
+    }
+  }
+
+  /// 파일 또는 이미지를 지정한 연락처에게 전송한다.
+  Future<TransferId?> sendFile({
+    required Uint8List data,
+    required String fileName,
+    required String mimeType,
+    required String targetNodeIdHex,
+    TransferKind kind = TransferKind.file,
+    int imageIndex = 0,
+  }) async {
+    try {
+      return await _transfer.sendFile(
+        data: data,
+        fileName: fileName,
+        mimeType: mimeType,
+        targetNodeIdHex: targetNodeIdHex,
+        kind: kind,
+        imageIndex: imageIndex,
+      );
+    } catch (e) {
+      _log('sendFile 오류: $e');
+      return null;
     }
   }
 
@@ -751,6 +816,12 @@ class MessagingService {
       case MsgType.ack:
         // Phase 2 구현 예정
         _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
+      case MsgType.fileHeader:
+        _transfer.handleFileHeader(packet, _hex(packet.senderId));
+      case MsgType.fileChunk:
+        _transfer.handleFileChunk(packet, _hex(packet.senderId));
+      case MsgType.fileAck:
+        _transfer.handleFileAck(packet, _hex(packet.senderId));
     }
 
     // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
@@ -785,6 +856,7 @@ class MessagingService {
     MeshPacket packet, {
     String? excludeDeviceId,
   }) async {
+    unawaited(_lan.broadcastPacket(packet));
     var recipientCount = 0;
     for (var attempt = 0; attempt < 3; attempt++) {
       recipientCount = await _ble.broadcastPacket(
@@ -1216,12 +1288,15 @@ class MessagingService {
     _connectionAnnounceTimer = null;
     await _connectionSubscription?.cancel();
     _connectionSubscription = null;
+    await _lanConnectionSubscription?.cancel();
+    _lanConnectionSubscription = null;
     _cleanSeenTimer?.cancel();
     _cleanSeenTimer = null;
     _diagnosticMessageTimer?.cancel();
     _diagnosticMessageTimer = null;
     _topologyRequestsHandledAt.clear();
     _ble.stopHeartbeat();
+    await _lan.dispose();
 
     if (!_messageStreamController.isClosed) {
       await _messageStreamController.close();
