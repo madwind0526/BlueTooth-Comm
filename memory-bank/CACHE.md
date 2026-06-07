@@ -2,6 +2,22 @@
 
 > 임시 발견사항 저장소. Wave 완료 후 knowledge/ 로 flush하고 이 섹션을 비울 것.
 
+## Active Findings (2026-06-07 v3 — v1.0.V)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 구현 | TransferStorageService — 파일/이미지를 appSupportDir/mesh_files/<contactHex>/<tid>.bin+json에 저장. save()/loadAll()/delete() | PATTERNS.md |
+| 구현 | MessagingService가 transferStream 구독 → TransferCompleted 시 TransferStorageService.save() 자동 호출 (채팅창 닫혀있어도 저장) | PATTERNS.md |
+| 구현 | ChatScreen._loadStoredFiles() — initState에서 TransferStorageService.loadAll()로 저장된 파일 복원. 이미지는 bytes 로드 | PATTERNS.md |
+| 구현 | _showImageFullScreen() — barrierDismissible: false, 저장/삭제/닫기 버튼. 삭제 = 디스크 + 목록에서 제거 | PATTERNS.md |
+| 버그수정 | S21(수신자) 이미지 미표시 — 채팅창이 닫혀 있을 때 TransferCompleted 이벤트 수신 불가 → MessagingService 자동저장 + _loadStoredFiles() 복원으로 해결 | trouble-shooting.md |
+| 버그수정 | BLE 파일 전송 0% — TransferChunkSize.ble 400→380 (MeshPacket 오버헤드 114 + 380 = 494 ≤ 512 BLE max) | trouble-shooting.md |
+| 버그수정 | Windows BLE 0 연결 — withServices 필터가 Windows에서 광고 UUID 미포함 기기 차단. Platform.isWindows ? [] : [Guid(serviceUuid)] | trouble-shooting.md |
+| UI | _ConnectionBadge 연결 표시 — "N LAN / M BLE", "N LAN", "M BLE", "0 연결" 조합으로 LAN/BLE 분리 표시 | PATTERNS.md |
+| UI | 이미지 전체화면에 삭제 아이콘 추가 — barrierDismissible false, 삭제 후 파일 목록에서 즉시 제거 | PATTERNS.md |
+| 규칙 | Export 2개 파일 분리 — contacts: mesh_comm_contacts_<ts>.json, conversations: mesh_comm_conversations_<ts>.json | RULES.md |
+| 규칙 | 이미지 전송은 1개씩 (BLE 대역폭 제한으로 10개 동시 무리) | RULES.md |
+
 ## Active Findings (2026-06-07 v2)
 
 | 유형 | 발견사항 | 이동 대상 |

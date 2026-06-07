@@ -139,12 +139,46 @@ class TransferCompleted extends TransferEvent {
   final Uint8List data;
   final TransferMeta meta;
   final TransferDirection direction;
+  /// 수신 시 senderId hex, 발신 시 targetId hex — 저장 경로에 사용.
+  final String contactNodeIdHex;
   const TransferCompleted(
     super.tid, {
     required this.data,
     required this.meta,
     required this.direction,
+    required this.contactNodeIdHex,
   });
+}
+
+/// 로컬에 저장된 파일/이미지 레코드.
+class TransferFileRecord {
+  final String tid;
+  final String filePath;
+  final String contactHex;
+  final String fileName;
+  final String mimeType;
+  final TransferDirection direction;
+  final int timestamp;
+  final int fileSize;
+
+  const TransferFileRecord({
+    required this.tid,
+    required this.filePath,
+    required this.contactHex,
+    required this.fileName,
+    required this.mimeType,
+    required this.direction,
+    required this.timestamp,
+    required this.fileSize,
+  });
+
+  bool get isImage =>
+      mimeType.startsWith('image/') ||
+      fileName.toLowerCase().endsWith('.jpg') ||
+      fileName.toLowerCase().endsWith('.jpeg') ||
+      fileName.toLowerCase().endsWith('.png') ||
+      fileName.toLowerCase().endsWith('.gif') ||
+      fileName.toLowerCase().endsWith('.webp');
 }
 
 class TransferFailed extends TransferEvent {

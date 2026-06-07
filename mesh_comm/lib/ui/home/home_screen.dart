@@ -4308,20 +4308,29 @@ class _ConnectionBadge extends StatelessWidget {
             final lanCount = lanSnap.data?.length ?? 0;
             final total = bleCount + lanCount;
             final color = total == 0 ? Colors.redAccent : Colors.greenAccent;
+
+            // "2 LAN / 1 BLE" 포맷 또는 "0 연결"
+            final String label;
+            if (lanCount > 0 && bleCount > 0) {
+              label = '$lanCount LAN / $bleCount BLE';
+            } else if (lanCount > 0) {
+              label = '$lanCount LAN';
+            } else if (bleCount > 0) {
+              label = '$bleCount BLE';
+            } else {
+              label = '0 연결';
+            }
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.circle, size: 9, color: color),
                 const SizedBox(height: 3),
                 Text(
-                  '$total 연결',
+                  label,
                   style: TextStyle(color: color, fontSize: 9),
+                  textAlign: TextAlign.center,
                 ),
-                if (lanCount > 0)
-                  Text(
-                    'LAN $lanCount',
-                    style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8),
-                  ),
               ],
             );
           },

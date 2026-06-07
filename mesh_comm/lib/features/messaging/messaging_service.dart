@@ -18,6 +18,7 @@ import 'package:mesh_comm/features/identity/user_level.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
 
 import 'message_policy.dart';
 import 'topology_message.dart';
@@ -237,6 +238,21 @@ class MessagingService {
 
     // TransferService 초기화
     _transfer.init(sendPacket: _sendPacketToNodeId);
+
+    // 전송 완료 시 자동으로 로컬에 파일 저장 (채팅창 열려있지 않아도 보존)
+    _transfer.transferStream.listen((event) {
+      if (event is TransferCompleted) {
+        TransferStorageService().save(
+          data: event.data,
+          tid: event.meta.tid,
+          contactHex: event.contactNodeIdHex,
+          fileName: event.meta.fileName,
+          mimeType: event.meta.mimeType,
+          direction: event.direction,
+          fileSize: event.meta.fileSize,
+        );
+      }
+    });
 
     // KEY_ANNOUNCE 즉시 브로드캐스트 (R-10)
     await broadcastKeyAnnounce();

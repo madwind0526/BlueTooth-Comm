@@ -12,6 +12,7 @@ import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
@@ -117,6 +118,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadHistory();
     _subscribeToStream();
     _subscribeToTransfers();
+    unawaited(_loadStoredFiles());
     _historyRefreshTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _loadHistory(replace: true),
@@ -229,11 +231,14 @@ class _ChatScreenState extends State<ChatScreen> {
             _activeTransfers[event.tid]?.progress = event.progress;
           case TransferCompleted():
             _activeTransfers.remove(event.tid);
+            // 이미 저장된 항목 중복 방지 (MessagingService가 디스크에 저장함)
+            if (_completedFiles.any((f) => f.tid == event.tid)) break;
             final cachedBytes = _outgoingImageCache.remove(event.tid);
             final bytes = event.direction == TransferDirection.incoming
                 ? event.data
                 : cachedBytes;
             _completedFiles.add(_CompletedFile(
+              tid: event.tid,
               meta: event.meta,
               data: bytes,
               direction: event.direction,
@@ -245,6 +250,40 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     });
+  }
+
+  /// 로컬에 저장된 파일/이미지를 불러와 채팅 목록에 표시한다.
+  Future<void> _loadStoredFiles() async {
+    final records = await TransferStorageService().loadAll(_contactHex);
+    if (!mounted) return;
+    final loaded = <_CompletedFile>[];
+    for (final r in records) {
+      // 이미 _completedFiles에 있으면 건너뜀 (TransferCompleted 이벤트로 이미 추가됨)
+      if (_completedFiles.any((f) => f.tid == r.tid)) continue;
+      Uint8List? bytes;
+      if (r.isImage) {
+        try {
+          bytes = await File(r.filePath).readAsBytes();
+        } catch (_) {}
+      }
+      loaded.add(_CompletedFile(
+        tid: r.tid,
+        meta: TransferMeta(
+          tid: r.tid,
+          fileName: r.fileName,
+          fileSize: r.fileSize,
+          totalChunks: 1,
+          mimeType: r.mimeType,
+          kind: r.isImage ? TransferKind.image : TransferKind.file,
+        ),
+        data: bytes,
+        filePath: r.filePath,
+        direction: r.direction,
+        timestamp: r.timestamp,
+      ));
+    }
+    if (!mounted || loaded.isEmpty) return;
+    setState(() => _completedFiles.addAll(loaded));
   }
 
   // ── 첨부 전송 ─────────────────────────────────────────────────────────────────
@@ -795,6 +834,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (file.data == null) return;
     showDialog<void>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.black,
         insetPadding: EdgeInsets.zero,
@@ -819,6 +859,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
                   ),
                   IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
+                    tooltip: '삭제',
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _deleteFile(file);
+                    },
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
                     onPressed: () => Navigator.pop(ctx),
                   ),
@@ -829,6 +877,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _deleteFile(_CompletedFile file) async {
+    await TransferStorageService().delete(file.tid, _contactHex);
+    if (!mounted) return;
+    setState(() => _completedFiles.removeWhere((f) => f.tid == file.tid));
   }
 
   Future<void> _saveFile(_CompletedFile file) async {
@@ -1037,14 +1091,18 @@ class _ActiveTransfer {
 // ── 완료된 파일/이미지 모델 ─────────────────────────────────────────────────────
 
 class _CompletedFile {
+  final String tid;
   final TransferMeta meta;
   final Uint8List? data;
+  final String? filePath; // 디스크에서 복원한 경우 경로
   final TransferDirection direction;
   final int timestamp;
 
   _CompletedFile({
+    required this.tid,
     required this.meta,
     this.data,
+    this.filePath,
     required this.direction,
     required this.timestamp,
   });

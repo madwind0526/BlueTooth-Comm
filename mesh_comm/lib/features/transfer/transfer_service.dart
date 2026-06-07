@@ -199,6 +199,7 @@ class TransferService {
           data: assembled,
           meta: transfer.meta,
           direction: TransferDirection.incoming,
+          contactNodeIdHex: transfer.senderNodeIdHex,
         ));
       }
     } catch (e) {
@@ -238,6 +239,7 @@ class TransferService {
           data: transfer.data,
           meta: transfer.meta,
           direction: TransferDirection.outgoing,
+          contactNodeIdHex: transfer.targetNodeIdHex,
         ));
         return;
       }
