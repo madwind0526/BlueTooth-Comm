@@ -35,6 +35,23 @@
 - Attachment transfer is documented but not fully implemented; full files need a multi-chunk protocol.
 - Identity backup is now encrypted-only. Backup asks for a password, writes `*.enc.json`, and restore requires the same password. Old plaintext identity backups are intentionally rejected. The app does not store the backup password; restoring the node ID means restoring the full identity keypair, not only the short code.
 
+## Latest 2026-06-07
+
+- Current version: `v1.0.U`
+- LAN/Wi-Fi 전송 재구조화: `TransportKind.wifi` 제거, BLE 아닌 모든 네트워크 연결 = `TransportKind.lan`
+- LAN On/Off 토글 구현: `LanService.start()/stop()` 추가, 홈 LAN 버튼 클릭으로 On/Off 가능
+- LAN 초기 상태 `available: true, enabled: true` (서비스 자동 시작)
+- Wi-Fi 버튼 헤더에서 제거 (LAN / BLE 두 버튼만 남음)
+- SCAN 토폴로지 및 가상 메시(Demo Mode) Wi-Fi 엣지 → LAN으로 통합
+- Tooltip 한국어 인코딩 깨짐 버그 수정 (`吏???덉젙` → `지원 예정`)
+- 규칙: 수정 사항은 항상 memory-bank MD 파일 업데이트; 사소한 수정에서는 버전 올리지 않음
+- 파일 relay 차단: fileHeader/fileChunk/fileAck는 Step 5에서 return (직접 연결 전용)
+- 직접 연결 추적: `hopCount==0` 패킷 수신 시 `_deviceToNodeHex[fromDeviceId] = nodeIdHex` 기록
+- `isDirectlyConnected(nodeIdHex)`: BLE 직접 연결 또는 LAN peer 여부 확인
+- `sendFile` 직접 연결 없으면 즉시 null 반환
+- UI: 페이퍼클립 아이콘 제거, 드롭다운에 파일/이미지 항목 추가 (선택 즉시 picker 오픈)
+- 파일/이미지 선택 전 직접 연결 확인 → 미연결 시 SnackBar "직접 연결된 경우에만 파일/이미지 전송이 가능합니다."
+
 ## Current Focus
 
 - ✅ Phase-1 portrait shell: top transport menu, left filters, bottom navigation

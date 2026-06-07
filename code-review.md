@@ -1,6 +1,59 @@
 # MeshComm Code Review Log
 
 > 날짜별 리뷰 결과를 누적 기록합니다.
+
+---
+
+## 2026-06-07 — Export/Import + File Transfer Direct-Only
+
+### 리뷰 범위
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `lib/core/lan/lan_service.dart` | `hasPeer()` 추가 |
+| `lib/features/messaging/messaging_service.dart` | 직접 연결 추적, `isDirectlyConnected()`, 파일 relay 차단, `sendFile` 직접 연결 검사 |
+| `lib/ui/chat/chat_screen.dart` | 페이퍼클립 제거, 드롭다운에 파일/이미지 항목 추가 |
+| `lib/core/storage/database_service.dart` | `exportAllMessagesRaw()`, `importMessagesRaw()`, `deleteAllSavedContacts()` |
+| `lib/features/contacts/contact_file_service.dart` | `exportBackupToJson()`, `importContactsFromBackupJson()`, `importConversationsFromJson()`, 메시지 직렬화 헬퍼 |
+| `lib/ui/home/home_screen.dart` | Export/Import 다이얼로그, `_deleteAllContacts()`, Settings "연락처 전부 지우기" |
+
+### Critical Issues (수정 완료)
+
+**C-1. `ContactService().refresh()` await 누락 → 수정됨**
+- **위치**: `_deleteAllContacts()` (home_screen.dart)
+- **문제**: `await` 없이 호출 → `_loadContacts()` 실행 시 리프레시 미완료 상태로 race condition
+- **수정**: `await` + `if (!mounted) return` 가드 추가
+
+**C-2. Export 다이얼로그 "전체 선택" 부분 선택 상태 미표현 → 수정됨**
+- **위치**: `_ExportDialogState` (home_screen.dart)
+- **문제**: `tristate: false` 사용으로 부분 선택 상태 시각화 불가
+- **수정**: `tristate: true` + `bool? _allSelectedState` 계산 프로퍼티 (null=부분, true=전체, false=없음)
+
+### Warnings (확인 필요)
+
+**W-1. `hopCount == 0` 직접 연결 추적의 이론적 spoofing 위험**
+- 악의적 노드가 hopCount=0 위조 가능. 단, 서명 검증(R-07)이 패킷 진위 보장하므로 실용적 위험 낮음
+- 향후 BLE 레이어에서 deviceId→nodeId 직접 매핑으로 개선 권고
+
+**W-2. 대규모 메시지 export/import 메모리 사용**
+- 전체 메시지 일괄 메모리 로드. 개인 P2P 앱 특성상 즉각적 위험 없음
+- 향후 필요 시 배치 크기 제한(500건/배치) 추가 권고
+
+**W-3. `encryptionPublicKey` 길이 미검증 (import)**
+- `nodeId`/`publicKey` 검증하지만 `encryptionPublicKey` 길이 검증 없음
+- 향후 `encryptionPublicKey.length != 32` 조건 추가 권고
+
+### Minor
+
+- Import 시 `is_read = 0`으로 초기화 (읽었던 메시지도 안읽음으로 보임) → 의도된 동작
+- 구버전(`mesh_comm_contacts`) + 신버전(`mesh_comm_backup`) 모두 `contacts` 키 최상위 → 하위 호환됨
+- Export 파일명을 `mesh_comm_backup_<timestamp>.json`으로 통일
+
+### 전체 평가: 8.5/10
+
+강점: 레이어 분리 명확, relay 차단으로 0% 버그 근본 해결, tristate 체크박스 UX, import 타입 선택 후 파일 picker 순서 직관적
+개선된 항목: C-1/C-2 수정 완료
+향후 과제: hopCount 기반 추적 → transport 레이어 직접 노출로 개선, 메시지 export 페이지네이션
 > 각 리뷰는 `## [날짜]` 섹션으로 구분되어 이전 결과와 겹치지 않습니다.
 
 ---

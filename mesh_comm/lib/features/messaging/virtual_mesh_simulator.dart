@@ -441,8 +441,7 @@ String _edgeKey(String a, String b) => a.compareTo(b) <= 0 ? '$a:$b' : '$b:$a';
 
 int _transportPriority(TransportKind kind) {
   return switch (kind) {
-    TransportKind.lan => 3,
-    TransportKind.wifi => 2,
+    TransportKind.lan => 2,
     TransportKind.bluetooth => 1,
   };
 }
@@ -450,7 +449,6 @@ int _transportPriority(TransportKind kind) {
 int _transportLatencyMs(TransportKind kind) {
   return switch (kind) {
     TransportKind.lan => 10,
-    TransportKind.wifi => 40,
     TransportKind.bluetooth => 180,
   };
 }

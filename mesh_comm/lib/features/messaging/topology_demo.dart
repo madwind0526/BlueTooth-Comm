@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+﻿import 'dart:typed_data';
 
 import 'package:mesh_comm/core/transport/transport_status.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
@@ -87,19 +87,19 @@ class DemoTopologyScenario {
       responses: [
         _response('demo-large', nodes['relayA']!, [
           _via(nodes['alpha']!, TransportKind.bluetooth),
-          _via(nodes['bravo']!, TransportKind.wifi),
+          _via(nodes['bravo']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['relayB']!, [
-          _via(nodes['bravo']!, TransportKind.wifi),
+          _via(nodes['bravo']!, TransportKind.lan),
           _via(nodes['camp']!, TransportKind.lan),
           _via(nodes['gate']!, TransportKind.bluetooth),
         ], now),
         _response('demo-large', nodes['relayC']!, [
           _via(nodes['echo']!, TransportKind.bluetooth),
-          _via(nodes['dock']!, TransportKind.wifi),
+          _via(nodes['dock']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['relayD']!, [
-          _via(nodes['dock']!, TransportKind.wifi),
+          _via(nodes['dock']!, TransportKind.lan),
           _via(nodes['harbor']!, TransportKind.bluetooth),
         ], now),
         _response('demo-large', nodes['alpha']!, [
@@ -107,7 +107,7 @@ class DemoTopologyScenario {
           _via(nodes['iris']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['bravo']!, [
-          _via(nodes['field']!, TransportKind.wifi),
+          _via(nodes['field']!, TransportKind.lan),
           _via(nodes['junction']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['camp']!, [
@@ -116,7 +116,7 @@ class DemoTopologyScenario {
         ], now),
         _response('demo-large', nodes['dock']!, [
           _via(nodes['lime']!, TransportKind.bluetooth),
-          _via(nodes['mango']!, TransportKind.wifi),
+          _via(nodes['mango']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['delta']!, [
           _via(nodes['north']!, TransportKind.bluetooth),
@@ -126,20 +126,20 @@ class DemoTopologyScenario {
           _via(nodes['pico']!, TransportKind.bluetooth),
         ], now),
         _response('demo-large', nodes['junction']!, [
-          _via(nodes['quartz']!, TransportKind.wifi),
+          _via(nodes['quartz']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['lime']!, [
           _via(nodes['river']!, TransportKind.bluetooth),
         ], now),
         _response('demo-large', nodes['mango']!, [
-          _via(nodes['summit']!, TransportKind.wifi),
+          _via(nodes['summit']!, TransportKind.lan),
           _via(nodes['tower']!, TransportKind.lan),
         ], now),
         _response('demo-large', nodes['north']!, [
           _via(nodes['umbra']!, TransportKind.bluetooth),
         ], now),
         _response('demo-large', nodes['quartz']!, [
-          _via(nodes['valley']!, TransportKind.wifi),
+          _via(nodes['valley']!, TransportKind.lan),
         ], now),
       ],
     );

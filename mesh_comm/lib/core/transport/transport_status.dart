@@ -1,13 +1,11 @@
 enum TransportKind {
   lan('LAN'),
-  wifi('Wi-Fi'),
   bluetooth('BLE');
 
   final String label;
   const TransportKind(this.label);
 
-  bool get implementedForMessages =>
-      this == TransportKind.bluetooth || this == TransportKind.lan;
+  bool get implementedForMessages => true;
 }
 
 class TransportStatus {

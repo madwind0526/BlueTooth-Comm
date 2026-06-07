@@ -155,7 +155,6 @@ void main() {
   test('transport and attachment policies expose current limits', () {
     expect(TransportKind.bluetooth.implementedForMessages, isTrue);
     expect(TransportKind.lan.implementedForMessages, isTrue);
-    expect(TransportKind.wifi.implementedForMessages, isFalse);
 
     expect(MessageAttachmentPolicy.maxImagesPerMessage, 10);
     expect(MessageAttachmentPolicy.isSupportedExtension('jpg'), isTrue);
@@ -221,7 +220,7 @@ void main() {
           displayName: 'Phone',
           deviceType: MeshDeviceType.phone,
           userLevel: UserLevel.user,
-          transportKind: TransportKind.wifi,
+          transportKind: TransportKind.lan,
           isSaved: false,
           lastSeen: 20,
         ),
@@ -234,7 +233,7 @@ void main() {
     expect(restored.responder.deviceType, MeshDeviceType.pc);
     expect(restored.responder.userLevel, UserLevel.creator);
     expect(restored.neighbors.single.displayName, 'Phone');
-    expect(restored.neighbors.single.transportKind, TransportKind.wifi);
+    expect(restored.neighbors.single.transportKind, TransportKind.lan);
   });
 
   test('demo topology builds a visible five-depth private mesh', () {
@@ -281,7 +280,7 @@ void main() {
     expect(delivery.path.first, nodeIdHex(self.nodeId));
     expect(delivery.path.last, virtualNodeId(0x54));
     expect(delivery.transports, contains(TransportKind.bluetooth));
-    expect(delivery.transports, contains(TransportKind.wifi));
+    expect(delivery.transports, contains(TransportKind.lan));
     expect(delivery.transports, contains(TransportKind.lan));
     expect(delivery.deliveredAtMs, greaterThan(1000));
   });

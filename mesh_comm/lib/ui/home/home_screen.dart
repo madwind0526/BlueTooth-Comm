@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io' show File, Platform, exit;
 import 'dart:math' as math;
 
@@ -75,8 +75,7 @@ Color _roleColor(
 
 int _transportPriority(TransportKind kind) {
   return switch (kind) {
-    TransportKind.lan => 3,
-    TransportKind.wifi => 2,
+    TransportKind.lan => 2,
     TransportKind.bluetooth => 1,
   };
 }
@@ -107,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<AppSettings>? _settingsSubscription;
   StreamSubscription<ReceivedMessage>? _messageSubscription;
   StreamSubscription<TopologyResponse>? _topologySubscription;
+  StreamSubscription<List<String>>? _lanPeersSubscription;
   Timer? _chatCleanupTimer;
   List<Contact> _contacts = [];
   Set<String> _chatContactCodes = {};
@@ -121,17 +121,13 @@ class _HomeScreenState extends State<HomeScreen> {
   HomeFilter _filter = HomeFilter.all;
   _HomeSection _section = _HomeSection.home;
   bool _bluetoothEnabled = true;
+  bool _lanEnabled = true;
   bool _isScanning = false;
   Map<TransportKind, TransportStatus> _transports = const {
     TransportKind.lan: TransportStatus(
       kind: TransportKind.lan,
-      enabled: false,
-      available: false,
-    ),
-    TransportKind.wifi: TransportStatus(
-      kind: TransportKind.wifi,
-      enabled: false,
-      available: false,
+      enabled: true,
+      available: true,
     ),
     TransportKind.bluetooth: TransportStatus(
       kind: TransportKind.bluetooth,
@@ -178,6 +174,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _scanDepthController.text = settings.scanDefaultDepth.toString();
       });
     });
+    _lanPeersSubscription = MessagingService().lanPeersStream.listen((_) {
+      if (mounted) setState(() {});
+    });
     _searchController.addListener(_refresh);
     _scanDepthController.addListener(_refresh);
   }
@@ -186,6 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _contactsSubscription?.cancel();
     _settingsSubscription?.cancel();
+    _lanPeersSubscription?.cancel();
     _messageSubscription?.cancel();
     _topologySubscription?.cancel();
     _chatCleanupTimer?.cancel();
@@ -285,6 +285,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (Platform.isAndroid) await _bleService.stopAdvertising();
     for (final deviceId in List<String>.from(_bleService.connectedDeviceIds)) {
       await _bleService.disconnect(deviceId);
+    }
+  }
+
+  Future<void> _toggleLan() async {
+    final enable = !_lanEnabled;
+    setState(() {
+      _lanEnabled = enable;
+      _transports = Map.of(_transports)
+        ..[TransportKind.lan] = _transports[TransportKind.lan]!
+            .copyWith(enabled: enable);
+    });
+    if (enable) {
+      await MessagingService().startLan();
+    } else {
+      await MessagingService().stopLan();
     }
   }
 
@@ -565,6 +580,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onBackupIdentity: _backupIdentity,
         onRestoreIdentity: _restoreIdentity,
         onCleanupStaleContacts: _cleanupStaleContacts,
+        onDeleteAllContacts: _deleteAllContacts,
         onDeleteAllMessages: _deleteAllMessages,
       ),
     );
@@ -1290,36 +1306,30 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _importContacts() async {
-    try {
-      final file = await openFile();
-      if (file == null) return;
+  Future<void> _importContacts() => _showImportDialog();
+  Future<void> _exportContacts() => _showExportDialog();
 
-      final count = await _contactFileService.importFromJson(
-        await file.readAsString(),
+  Future<void> _showExportDialog() async {
+    final contacts = _savedContactsExcludingSelf();
+    final result = await showDialog<({List<Contact> contacts, bool includeConversations})>(
+      context: context,
+      builder: (context) => _ExportDialog(contacts: contacts),
+    );
+    if (result == null) return;
+
+    try {
+      final json = await _contactFileService.exportBackupToJson(
+        contacts: result.contacts,
+        includeConversations: result.includeConversations,
       );
-      await _loadContacts();
-      _showMessage('$count개 연락처를 가져왔습니다.');
-    } catch (e) {
-      _showMessage('연락처 import 실패: $e');
-    }
-  }
-
-  Future<void> _exportContacts() async {
-    try {
-      final json = await _contactFileService.exportToJson();
       final filename =
-          'mesh_comm_contacts_${DateTime.now().millisecondsSinceEpoch}.json';
+          'mesh_comm_backup_${DateTime.now().millisecondsSinceEpoch}.json';
       String savedPath;
-
       try {
         final location = await getSaveLocation(
           suggestedName: filename,
           acceptedTypeGroups: const [
-            XTypeGroup(
-              label: 'MeshComm contacts',
-              extensions: ['json', 'meshcontacts'],
-            ),
+            XTypeGroup(label: 'MeshComm backup', extensions: ['json']),
           ],
         );
         if (location == null) return;
@@ -1331,11 +1341,64 @@ class _HomeScreenState extends State<HomeScreen> {
         await file.writeAsString(json);
         savedPath = file.path;
       }
-
-      _showMessage('연락처를 저장했습니다: $savedPath');
+      _showMessage('Export 완료: $savedPath');
     } catch (e) {
-      _showMessage('연락처 export 실패: $e');
+      _showMessage('Export 실패: $e');
     }
+  }
+
+  Future<void> _showImportDialog() async {
+    if (!mounted) return;
+    final type = await showDialog<String>(
+      context: context,
+      builder: (context) => const _ImportDialog(),
+    );
+    if (type == null) return;
+
+    try {
+      final file = await openFile();
+      if (file == null) return;
+      final rawJson = await file.readAsString();
+
+      if (type == 'contacts') {
+        final count = await _contactFileService.importContactsFromBackupJson(rawJson);
+        await _loadContacts();
+        _showMessage('$count개 연락처를 가져왔습니다.');
+      } else {
+        final count = await _contactFileService.importConversationsFromJson(rawJson);
+        await _loadChatContactCodes();
+        await _loadUnreadCounts();
+        _showMessage('$count개 메시지를 가져왔습니다.');
+      }
+    } catch (e) {
+      _showMessage('Import 실패: $e');
+    }
+  }
+
+  Future<void> _deleteAllContacts() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('연락처 전부 지우기'),
+        content: const Text('저장된 연락처를 모두 삭제합니까?\n대화 기록은 유지됩니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await DatabaseService().deleteAllSavedContacts();
+    await ContactService().refresh();
+    if (!mounted) return;
+    await _loadContacts();
+    _showMessage('연락처를 모두 삭제했습니다.');
   }
 
   Future<void> _backupIdentity() async {
@@ -1661,12 +1724,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.lan_outlined,
                 enabled: _transport(TransportKind.lan).enabled,
                 available: _transport(TransportKind.lan).available,
-              ),
-              _TransportButton(
-                label: _transport(TransportKind.wifi).kind.label,
-                icon: Icons.wifi_outlined,
-                enabled: _transport(TransportKind.wifi).enabled,
-                available: _transport(TransportKind.wifi).available,
+                onPressed: _toggleLan,
               ),
               _TransportButton(
                 label: _transport(TransportKind.bluetooth).kind.label,
@@ -1966,7 +2024,7 @@ class _TransportButton extends StatelessWidget {
         ? _HomeScreenState._accent
         : Theme.of(context).colorScheme.onSurfaceVariant;
     return Tooltip(
-      message: available ? '$label On/Off' : '$label 吏???덉젙',
+      message: available ? '$label On/Off' : '$label 지원 예정',
       child: InkWell(
         onTap: available ? onPressed : null,
         borderRadius: BorderRadius.circular(8),
@@ -3443,7 +3501,6 @@ class _ScanMapPainter extends CustomPainter {
       )
       ..strokeWidth = switch (kind) {
         TransportKind.lan => 2.8,
-        TransportKind.wifi => 1.5,
         TransportKind.bluetooth => 1.2,
       }
       ..strokeCap = StrokeCap.round;
@@ -4260,6 +4317,7 @@ class _SettingsDialog extends StatefulWidget {
   final Future<void> Function() onBackupIdentity;
   final Future<void> Function() onRestoreIdentity;
   final Future<void> Function() onCleanupStaleContacts;
+  final Future<void> Function() onDeleteAllContacts;
   final Future<void> Function() onDeleteAllMessages;
 
   const _SettingsDialog({
@@ -4267,6 +4325,7 @@ class _SettingsDialog extends StatefulWidget {
     required this.onBackupIdentity,
     required this.onRestoreIdentity,
     required this.onCleanupStaleContacts,
+    required this.onDeleteAllContacts,
     required this.onDeleteAllMessages,
   });
 
@@ -4483,6 +4542,12 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                         ),
                         const SizedBox(height: 18),
                         OutlinedButton.icon(
+                          onPressed: widget.onDeleteAllContacts,
+                          icon: const Icon(Icons.people_outline),
+                          label: const Text('연락처 전부 지우기'),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
                           onPressed: widget.onDeleteAllMessages,
                           icon: const Icon(Icons.delete_sweep_outlined),
                           label: const Text('Delete all messages'),
@@ -4652,6 +4717,210 @@ class _EmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Export Dialog ─────────────────────────────────────────────────────────────
+
+class _ExportDialog extends StatefulWidget {
+  final List<Contact> contacts;
+
+  const _ExportDialog({required this.contacts});
+
+  @override
+  State<_ExportDialog> createState() => _ExportDialogState();
+}
+
+class _ExportDialogState extends State<_ExportDialog> {
+  bool _includeContacts = true;
+  bool _includeConversations = false;
+  late List<bool> _selected;
+  @override
+  void initState() {
+    super.initState();
+    _selected = List.filled(widget.contacts.length, true);
+  }
+
+  List<Contact> get _selectedContacts {
+    if (!_includeContacts) return [];
+    return [
+      for (var i = 0; i < widget.contacts.length; i++)
+        if (_selected[i]) widget.contacts[i],
+    ];
+  }
+
+  /// null = 부분 선택, true = 전체, false = 없음
+  bool? get _allSelectedState {
+    if (_selected.isEmpty) return true;
+    final count = _selected.where((s) => s).length;
+    if (count == _selected.length) return true;
+    if (count == 0) return false;
+    return null;
+  }
+
+  bool get _canExport =>
+      (_includeContacts && _selectedContacts.isNotEmpty) ||
+      _includeConversations;
+
+  void _toggleAll(bool? v) {
+    final fill = v ?? true;
+    setState(() {
+      for (var i = 0; i < _selected.length; i++) {
+        _selected[i] = fill;
+      }
+    });
+  }
+
+  String _contactLabel(Contact c) {
+    if (c.displayName != null && c.displayName!.isNotEmpty) return c.displayName!;
+    return c.nodeId.take(4).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Export'),
+      contentPadding: const EdgeInsets.fromLTRB(0, 16, 0, 0),
+      content: SizedBox(
+        width: 320,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CheckboxListTile(
+                title: const Text('연락처'),
+                value: _includeContacts,
+                onChanged: (v) => setState(() => _includeContacts = v!),
+              ),
+              if (_includeContacts) ...[
+                CheckboxListTile(
+                  title: const Text(
+                    '전체 선택',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  value: _allSelectedState,
+                  tristate: true,
+                  onChanged: _toggleAll,
+                  contentPadding: const EdgeInsets.only(left: 24, right: 16),
+                ),
+                ...List.generate(widget.contacts.length, (i) {
+                  return CheckboxListTile(
+                    title: Text(
+                      _contactLabel(widget.contacts[i]),
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    value: _selected[i],
+                    dense: true,
+                    onChanged: (v) => setState(() => _selected[i] = v!),
+                    contentPadding: const EdgeInsets.only(left: 40, right: 16),
+                  );
+                }),
+              ],
+              CheckboxListTile(
+                title: const Text('대화'),
+                value: _includeConversations,
+                onChanged: (v) => setState(() => _includeConversations = v!),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          onPressed: _canExport
+              ? () => Navigator.pop(context, (
+                    contacts: _selectedContacts,
+                    includeConversations: _includeConversations,
+                  ))
+              : null,
+          child: const Text('Export'),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Import Dialog ─────────────────────────────────────────────────────────────
+
+class _ImportDialog extends StatefulWidget {
+  const _ImportDialog();
+
+  @override
+  State<_ImportDialog> createState() => _ImportDialogState();
+}
+
+// 라디오 버튼 타일 (RadioListTile 신버전 deprecated 우회)
+class _ImportRadioTile extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final String value;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ImportRadioTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        color: selected ? Theme.of(context).colorScheme.primary : null,
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      onTap: onTap,
+    );
+  }
+}
+
+class _ImportDialogState extends State<_ImportDialog> {
+  String _type = 'contacts';
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Import'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ImportRadioTile(
+            title: '연락처',
+            subtitle: '현재 연락처에 추가 (중복 제외)',
+            value: 'contacts',
+            selected: _type == 'contacts',
+            onTap: () => setState(() => _type = 'contacts'),
+          ),
+          _ImportRadioTile(
+            title: '대화',
+            subtitle: '기존 대화를 지우고 파일로 교체',
+            value: 'conversations',
+            selected: _type == 'conversations',
+            onTap: () => setState(() => _type = 'conversations'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _type),
+          child: const Text('파일 선택'),
+        ),
+      ],
     );
   }
 }

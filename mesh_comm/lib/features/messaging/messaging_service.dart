@@ -141,6 +141,9 @@ class MessagingService {
   StreamSubscription<List<String>>? _lanConnectionSubscription;
   Set<String> _knownBleDeviceIds = {};
 
+  // BLE deviceId → nodeId hex (직접 연결된 이웃 추적)
+  final Map<String, String> _deviceToNodeHex = {};
+
   // seen_messages 정리 타이머 (R-09: 30분 주기)
   Timer? _cleanSeenTimer;
 
@@ -171,6 +174,13 @@ class MessagingService {
 
   /// LAN 피어 목록 변경 스트림 (UI 업데이트용).
   Stream<List<String>> get lanPeersStream => _lan.connectedPeersStream;
+
+  Future<void> startLan() => _lan.start();
+  Future<void> stopLan() => _lan.stop();
+
+  /// [nodeIdHex]가 직접 BLE 또는 LAN으로 연결된 이웃인지 확인한다.
+  bool isDirectlyConnected(String nodeIdHex) =>
+      _deviceToNodeHex.values.contains(nodeIdHex) || _lan.hasPeer(nodeIdHex);
 
   /// 파일/이미지 전송 이벤트 스트림.
   Stream<TransferEvent> get transferStream => _transfer.transferStream;
@@ -254,10 +264,13 @@ class MessagingService {
 
   void _handleConnectedDevices(List<String> deviceIds) {
     final currentDeviceIds = deviceIds.toSet();
-    final hasNewDevice = currentDeviceIds
-        .difference(_knownBleDeviceIds)
-        .isNotEmpty;
+    final hasNewDevice = currentDeviceIds.difference(_knownBleDeviceIds).isNotEmpty;
+    final disconnected = _knownBleDeviceIds.difference(currentDeviceIds);
     _knownBleDeviceIds = currentDeviceIds;
+
+    for (final deviceId in disconnected) {
+      _deviceToNodeHex.remove(deviceId);
+    }
 
     if (!hasNewDevice) return;
 
@@ -681,7 +694,7 @@ class MessagingService {
     }
   }
 
-  /// 파일 또는 이미지를 지정한 연락처에게 전송한다.
+  /// 파일 또는 이미지를 지정한 연락처에게 전송한다. 직접 연결 시에만 허용한다.
   Future<TransferId?> sendFile({
     required Uint8List data,
     required String fileName,
@@ -690,6 +703,10 @@ class MessagingService {
     TransferKind kind = TransferKind.file,
     int imageIndex = 0,
   }) async {
+    if (!isDirectlyConnected(targetNodeIdHex)) {
+      _log('sendFile 차단: $targetNodeIdHex 직접 연결 없음');
+      return null;
+    }
     try {
       return await _transfer.sendFile(
         data: data,
@@ -766,6 +783,11 @@ class MessagingService {
       return;
     }
 
+    // hopCount == 0: 발신자가 직접 보낸 패킷 → 직접 연결 이웃으로 기록
+    if (packet.hopCount == 0) {
+      _deviceToNodeHex[fromDeviceId] = _hex(packet.senderId);
+    }
+
     // ── Step 1: msg_id 중복 확인 ─────────────────────────────────────────────
     final alreadySeen = await _db.isMessageSeen(packet.msgId);
     if (alreadySeen) {
@@ -817,14 +839,27 @@ class MessagingService {
         // Phase 2 구현 예정
         _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
       case MsgType.fileHeader:
-        _transfer.handleFileHeader(packet, _hex(packet.senderId));
+        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+          _transfer.handleFileHeader(packet, _hex(packet.senderId));
+        }
       case MsgType.fileChunk:
-        _transfer.handleFileChunk(packet, _hex(packet.senderId));
+        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+          _transfer.handleFileChunk(packet, _hex(packet.senderId));
+        }
       case MsgType.fileAck:
-        _transfer.handleFileAck(packet, _hex(packet.senderId));
+        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+          _transfer.handleFileAck(packet, _hex(packet.senderId));
+        }
     }
 
     // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
+    // 파일 패킷은 직접 연결 전용 — relay하지 않는다.
+    if (packet.msgType == MsgType.fileHeader ||
+        packet.msgType == MsgType.fileChunk ||
+        packet.msgType == MsgType.fileAck) {
+      return;
+    }
+
     if (packet.ttl <= 0) {
       _log('DROP(TTL=0): ${_hexShort(packet.msgId)}');
       return;

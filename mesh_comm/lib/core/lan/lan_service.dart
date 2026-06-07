@@ -70,6 +70,8 @@ class LanService {
 
   int get connectedCount => _peers.length;
 
+  bool hasPeer(String nodeIdHex) => _peers.containsKey(nodeIdHex);
+
   // ── 초기화 ──────────────────────────────────────────────────────────────────
 
   Future<void> init({
@@ -80,24 +82,36 @@ class LanService {
     _myNodeId = myNodeId;
     _onPacketReceived = onPacketReceived;
     _initialized = true;
+    await start();
+  }
 
+  /// LAN 서비스를 시작(재시작)한다. init() 이후에만 유효.
+  Future<void> start() async {
+    if (_myNodeId == null) return;
     await _startTcpServer();
     await _startUdpSocket();
     _startBeacon();
   }
 
-  Future<void> dispose() async {
+  /// LAN 서비스를 중단한다. start()로 재시작 가능.
+  Future<void> stop() async {
     _beaconTimer?.cancel();
     _beaconTimer = null;
     _udpSocket?.close();
     _udpSocket = null;
     await _tcpServer?.close();
     _tcpServer = null;
-    for (final socket in _peers.values) {
+    for (final socket in List<Socket>.from(_peers.values)) {
       socket.destroy();
     }
     _peers.clear();
     _buffers.clear();
+    _connecting.clear();
+    _notifyChange();
+  }
+
+  Future<void> dispose() async {
+    await stop();
     if (!_peersController.isClosed) {
       await _peersController.close();
     }

@@ -428,6 +428,32 @@ class DatabaseService {
     return _database.delete('messages');
   }
 
+  /// 모든 메시지를 원시 행으로 반환 (export용).
+  Future<List<Map<String, dynamic>>> exportAllMessagesRaw() {
+    return _database.query('messages', orderBy: 'timestamp ASC');
+  }
+
+  /// 메시지를 대량 insert한다. 기존 메시지 삭제 없이 중복만 무시.
+  Future<int> importMessagesRaw(List<Map<String, dynamic>> rows) async {
+    var count = 0;
+    final batch = _database.batch();
+    for (final row in rows) {
+      batch.insert(
+        'messages',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      count++;
+    }
+    await batch.commit(noResult: true);
+    return count;
+  }
+
+  /// 저장된 연락처를 모두 삭제한다.
+  Future<int> deleteAllSavedContacts() async {
+    return _database.delete('contacts');
+  }
+
   Future<int> deleteExpiredMessages({int? nowMs}) {
     final effectiveNowMs = nowMs ?? DateTime.now().millisecondsSinceEpoch;
     return _database.delete(

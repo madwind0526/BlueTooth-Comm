@@ -227,27 +227,38 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ── 첨부 전송 ─────────────────────────────────────────────────────────────────
 
+  String get _contactHex =>
+      widget.contact.nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+  bool _checkDirectConnection() {
+    if (MessagingService().isDirectlyConnected(_contactHex)) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('직접 연결된 경우에만 파일/이미지 전송이 가능합니다.')),
+    );
+    return false;
+  }
+
   Future<void> _pickAndSendFile() async {
+    if (!_checkDirectConnection()) return;
+
     const typeGroup = XTypeGroup(label: 'files');
     final file = await openFile(acceptedTypeGroups: [typeGroup]);
     if (file == null) return;
 
     final data = await file.readAsBytes();
-    final targetHex = widget.contact.nodeId
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-
     if (!mounted) return;
     await MessagingService().sendFile(
       data: Uint8List.fromList(data),
       fileName: file.name,
       mimeType: 'application/octet-stream',
-      targetNodeIdHex: targetHex,
+      targetNodeIdHex: _contactHex,
       kind: TransferKind.file,
     );
   }
 
   Future<void> _pickAndSendImages() async {
+    if (!_checkDirectConnection()) return;
+
     const imageTypes = XTypeGroup(
       label: 'images',
       extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'],
@@ -256,10 +267,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (files.isEmpty) return;
 
     final limited = files.take(10).toList();
-    final targetHex = widget.contact.nodeId
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-
     for (var i = 0; i < limited.length; i++) {
       if (!mounted) return;
       final data = await limited[i].readAsBytes();
@@ -267,7 +274,7 @@ class _ChatScreenState extends State<ChatScreen> {
         data: Uint8List.fromList(data),
         fileName: limited[i].name,
         mimeType: 'image/jpeg',
-        targetNodeIdHex: targetHex,
+        targetNodeIdHex: _contactHex,
         kind: TransferKind.image,
         imageIndex: i,
       );
@@ -354,13 +361,39 @@ class _ChatScreenState extends State<ChatScreen> {
     return '$h:$m';
   }
 
-  String _modeCompactLabel(MessageSendMode mode) {
-    return switch (mode) {
-      MessageSendMode.normal => '일반',
-      MessageSendMode.timed => '타임',
-      MessageSendMode.shortNotice => '공지S',
-      MessageSendMode.longNotice => '공지L',
-    };
+  // 드롭다운 항목 정의: 텍스트 모드 4개 + 파일/이미지 액션 2개
+  static const _dropdownItems = [
+    ('일반', 'normal'),
+    ('타임', 'timed'),
+    ('공지S', 'noticeS'),
+    ('공지L', 'noticeL'),
+    ('파일', 'file'),
+    ('이미지', 'image'),
+  ];
+
+  String get _dropdownValue => switch (_messageMode) {
+    MessageSendMode.normal => 'normal',
+    MessageSendMode.timed => 'timed',
+    MessageSendMode.shortNotice => 'noticeS',
+    MessageSendMode.longNotice => 'noticeL',
+  };
+
+  void _onDropdownChanged(String? value) {
+    if (value == null || _isSending) return;
+    switch (value) {
+      case 'file':
+        _pickAndSendFile();
+      case 'image':
+        _pickAndSendImages();
+      case 'normal':
+        setState(() => _messageMode = MessageSendMode.normal);
+      case 'timed':
+        setState(() => _messageMode = MessageSendMode.timed);
+      case 'noticeS':
+        setState(() => _messageMode = MessageSendMode.shortNotice);
+      case 'noticeL':
+        setState(() => _messageMode = MessageSendMode.longNotice);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -671,65 +704,28 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // 첨부 버튼
-            PopupMenuButton<String>(
-              icon: const Icon(
-                Icons.attach_file_rounded,
-                size: 22,
-                color: Color(0xFF9E9EB8),
-              ),
-              tooltip: '파일/이미지 전송',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              onSelected: (value) {
-                if (value == 'file') _pickAndSendFile();
-                if (value == 'image') _pickAndSendImages();
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'file',
-                  child: Row(
-                    children: [
-                      Icon(Icons.insert_drive_file_outlined, size: 18),
-                      SizedBox(width: 8),
-                      Text('파일 전송 (1개)'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'image',
-                  child: Row(
-                    children: [
-                      Icon(Icons.image_outlined, size: 18),
-                      SizedBox(width: 8),
-                      Text('이미지 전송 (최대 10개)'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 4),
+            // 모드 선택 (일반/타임/공지S/공지L/파일/이미지)
             Container(
-              width: 92,
+              width: 80,
               margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 color: const Color(0xFF0F0F1E),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0xFF2A2A3E)),
               ),
               child: DropdownButtonHideUnderline(
-                child: DropdownButton<MessageSendMode>(
-                  value: _messageMode,
+                child: DropdownButton<String>(
+                  value: _dropdownValue,
                   isExpanded: true,
                   dropdownColor: _incomingBubble,
                   selectedItemBuilder: (context) {
-                    return MessageSendMode.values
+                    return _dropdownItems
                         .map(
-                          (mode) => Align(
+                          (item) => Align(
                             alignment: Alignment.center,
                             child: Text(
-                              _modeCompactLabel(mode),
+                              item.$1,
                               textAlign: TextAlign.center,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -741,13 +737,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         )
                         .toList();
                   },
-                  items: MessageSendMode.values
+                  items: _dropdownItems
                       .map(
-                        (mode) => DropdownMenuItem(
-                          value: mode,
+                        (item) => DropdownMenuItem(
+                          value: item.$2,
                           child: Center(
                             child: Text(
-                              mode.label,
+                              item.$1,
                               textAlign: TextAlign.center,
                               style: const TextStyle(color: _textPrimary),
                             ),
@@ -755,12 +751,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       )
                       .toList(),
-                  onChanged: _isSending
-                      ? null
-                      : (mode) {
-                          if (mode == null) return;
-                          setState(() => _messageMode = mode);
-                        },
+                  onChanged: _isSending ? null : _onDropdownChanged,
                 ),
               ),
             ),

@@ -2,7 +2,29 @@
 
 > 임시 발견사항 저장소. Wave 완료 후 knowledge/ 로 flush하고 이 섹션을 비울 것.
 
-## Active Findings
+## Active Findings (2026-06-07 v2)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 버그수정 | fileHeader/fileChunk/fileAck 수신 시 targetId 확인 없이 처리 → 3기기 환경에서 S26이 S21 대상 파일 패킷도 처리해 spurious ACK 전송, 동시 _sendNextChunk 호출 race condition → 청크 누락으로 전송 0%에 멈춤. 수정: _handleIncomingPacket switch에서 _bytesEqual(packet.targetId, myNodeId) 체크 추가 | trouble-shooting.md |
+| 패턴 | TEXT는 _handleTextPacket 내부에서 isForMe 체크. 파일 패킷도 동일 패턴 적용 필요 (relay node는 step5에서 relay만 해야 함) | PATTERNS.md |
+
+---
+
+## Active Findings (2026-06-07)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 설계변경 | TransportKind.wifi 제거 — BLE 아닌 모든 전송 = LAN. Wi-Fi는 같은 공유기 망, LAN은 유선/LTE/위성. LAN 단일 계층으로 통합 | RULES.md |
+| 패턴 | LanService.start()/stop() — init() 후 toggle 가능. stop()은 소켓/타이머/피어 모두 닫고 stream은 유지. start()는 재소켓 바인딩. dispose()는 stop() + stream 닫기 | PATTERNS.md |
+| 패턴 | 홈 _toggleLan() — _lanEnabled bool + _transports copyWith(enabled) + MessagingService().startLan()/stopLan() 위임 | PATTERNS.md |
+| 규칙 | 수정 사항은 항상 memory-bank MD 파일 업데이트할 것 (active-context + STATE + CACHE) | RULES.md |
+| 규칙 | 버전 번호는 사소한 수정에서 올리지 않음 — 새 기능·배포 시에만 | RULES.md |
+| 버그수정 | home_screen.dart Tooltip 한국어 `吏???덉젙` 인코딩 깨짐 — PowerShell로 regex 교체, Edit tool 매칭 실패 (파일 인코딩 손상) | trouble-shooting.md |
+
+---
+
+## Previous Active Findings
 
 | 유형 | 발견사항 | 이동 대상 |
 |------|----------|-----------|

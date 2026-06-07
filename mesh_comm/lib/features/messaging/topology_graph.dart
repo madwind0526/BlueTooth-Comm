@@ -181,8 +181,7 @@ String _edgeKey(String left, String right) =>
 
 int _transportPriority(TransportKind kind) {
   return switch (kind) {
-    TransportKind.lan => 3,
-    TransportKind.wifi => 2,
+    TransportKind.lan => 2,
     TransportKind.bluetooth => 1,
   };
 }
