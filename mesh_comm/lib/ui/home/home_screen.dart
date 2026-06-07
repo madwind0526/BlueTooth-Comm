@@ -4307,23 +4307,25 @@ class _ConnectionBadge extends StatelessWidget {
             final bleCount = bleSnap.data?.length ?? 0;
             final lanCount = lanSnap.data?.length ?? 0;
             final total = bleCount + lanCount;
-            final color = total == 0 ? Colors.redAccent : Colors.greenAccent;
+            final dotColor = total == 0 ? Colors.redAccent : Colors.greenAccent;
+            final lanColor = lanCount > 0 ? Colors.greenAccent : Colors.redAccent;
+            final bleColor = bleCount > 0 ? Colors.greenAccent : Colors.redAccent;
 
             String fmt(int n) => n >= 9 ? '9+' : '$n';
 
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.circle, size: 9, color: color),
+                Icon(Icons.circle, size: 9, color: dotColor),
                 const SizedBox(height: 2),
                 Text(
                   '${fmt(lanCount)} LAN',
-                  style: TextStyle(color: color, fontSize: 9),
+                  style: TextStyle(color: lanColor, fontSize: 9),
                   textAlign: TextAlign.center,
                 ),
                 Text(
                   '${fmt(bleCount)} BLE',
-                  style: TextStyle(color: color, fontSize: 9),
+                  style: TextStyle(color: bleColor, fontSize: 9),
                   textAlign: TextAlign.center,
                 ),
               ],
