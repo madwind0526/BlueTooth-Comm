@@ -10,6 +10,7 @@ import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
+import 'package:mesh_comm/features/transfer/transfer_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
@@ -194,16 +195,21 @@ class _ChatScreenState extends State<ChatScreen> {
     final targetHex = widget.contact.nodeId
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
+
+    // 채팅방 재진입 시 진행 중인 전송 복원
+    for (final s in TransferService().activeTransferSnapshots) {
+      _activeTransfers[s.tid] = _ActiveTransfer(
+        meta: s.meta,
+        progress: s.progress,
+        direction: s.direction,
+        targetNodeIdHex: targetHex,
+      );
+    }
+
     _transferSubscription = MessagingService().transferStream.listen((event) {
       if (!mounted) return;
-      // 이 연락처와 관련된 전송만 처리
-      final transfer = _activeTransfers[event.tid];
-      final isOurs = transfer != null ||
-          (event is TransferStarted &&
-              (event.direction == TransferDirection.outgoing
-                  ? true
-                  : event.meta.tid.isNotEmpty));
-      if (!isOurs && event is! TransferStarted) return;
+      final isOurs = _activeTransfers.containsKey(event.tid) || event is TransferStarted;
+      if (!isOurs) return;
 
       setState(() {
         switch (event) {

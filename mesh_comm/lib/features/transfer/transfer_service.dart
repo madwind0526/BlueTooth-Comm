@@ -47,6 +47,29 @@ class TransferService {
 
   Stream<TransferEvent> get transferStream => _eventController.stream;
 
+  /// 현재 진행 중인 발신/수신 전송 스냅샷 (UI 복원용).
+  List<({TransferId tid, TransferMeta meta, double progress, TransferDirection direction})>
+      get activeTransferSnapshots {
+    final result = <({TransferId tid, TransferMeta meta, double progress, TransferDirection direction})>[];
+    for (final t in _outgoing.values) {
+      result.add((
+        tid: t.meta.tid,
+        meta: t.meta,
+        progress: t.meta.totalChunks > 0 ? t.ackedChunks / t.meta.totalChunks : 0.0,
+        direction: TransferDirection.outgoing,
+      ));
+    }
+    for (final t in _incoming.values) {
+      result.add((
+        tid: t.meta.tid,
+        meta: t.meta,
+        progress: t.meta.totalChunks > 0 ? t.receivedCount / t.meta.totalChunks : 0.0,
+        direction: TransferDirection.incoming,
+      ));
+    }
+    return result;
+  }
+
   void init({required SendPacketFn sendPacket}) {
     _sendPacket = sendPacket;
   }

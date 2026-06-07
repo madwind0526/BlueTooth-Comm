@@ -18,7 +18,9 @@ enum TransferStatus {
 
 /// 청크 크기 설정.
 class TransferChunkSize {
-  static const int ble = 400;   // BLE MTU 안전 범위
+  // MeshPacket 오버헤드 102 bytes + TID 8 + idx 4 = 114 bytes.
+  // BLE max write = 512 bytes → data = 512 - 114 = 398 → 사용 380 (안전 마진)
+  static const int ble = 380;
   static const int lan = 4000;  // LAN TCP (MeshPacket maxPayload 4096에서 여유)
 }
 
