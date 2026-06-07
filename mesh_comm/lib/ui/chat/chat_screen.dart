@@ -1,6 +1,7 @@
 // lib/ui/chat/chat_screen.dart
 
 import 'dart:async';
+import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -86,6 +87,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // 진행 중인 전송: tid → 진행률 (0.0~1.0) 및 메타
   final Map<String, _ActiveTransfer> _activeTransfers = {};
+  // 완료된 파일/이미지 (발신·수신 모두)
+  final List<_CompletedFile> _completedFiles = [];
+  // 발신 이미지 캐시 tid → bytes (TransferCompleted 전까지 보관)
+  final Map<String, Uint8List> _outgoingImageCache = {};
 
   // ── 라이프사이클 ─────────────────────────────────────────────────────────────
 
@@ -224,8 +229,19 @@ class _ChatScreenState extends State<ChatScreen> {
             _activeTransfers[event.tid]?.progress = event.progress;
           case TransferCompleted():
             _activeTransfers.remove(event.tid);
+            final cachedBytes = _outgoingImageCache.remove(event.tid);
+            final bytes = event.direction == TransferDirection.incoming
+                ? event.data
+                : cachedBytes;
+            _completedFiles.add(_CompletedFile(
+              meta: event.meta,
+              data: bytes,
+              direction: event.direction,
+              timestamp: DateTime.now().millisecondsSinceEpoch,
+            ));
           case TransferFailed():
             _activeTransfers.remove(event.tid);
+            _outgoingImageCache.remove(event.tid);
         }
       });
     });
@@ -269,21 +285,21 @@ class _ChatScreenState extends State<ChatScreen> {
       label: 'images',
       extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'],
     );
-    final files = await openFiles(acceptedTypeGroups: [imageTypes]);
-    if (files.isEmpty) return;
+    // 한 번에 1개만 선택
+    final file = await openFile(acceptedTypeGroups: [imageTypes]);
+    if (file == null) return;
+    if (!mounted) return;
 
-    final limited = files.take(10).toList();
-    for (var i = 0; i < limited.length; i++) {
-      if (!mounted) return;
-      final data = await limited[i].readAsBytes();
-      await MessagingService().sendFile(
-        data: Uint8List.fromList(data),
-        fileName: limited[i].name,
-        mimeType: 'image/jpeg',
-        targetNodeIdHex: _contactHex,
-        kind: TransferKind.image,
-        imageIndex: i,
-      );
+    final bytes = Uint8List.fromList(await file.readAsBytes());
+    final tid = await MessagingService().sendFile(
+      data: bytes,
+      fileName: file.name,
+      mimeType: 'image/jpeg',
+      targetNodeIdHex: _contactHex,
+      kind: TransferKind.image,
+    );
+    if (tid != null && mounted) {
+      setState(() => _outgoingImageCache[tid] = bytes);
     }
   }
 
@@ -602,12 +618,22 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    // 텍스트 메시지와 완료된 파일을 timestamp 순으로 합산
+    final combined = <dynamic>[..._messages, ..._completedFiles]
+      ..sort((a, b) {
+        final at = a is _ChatMessage ? a.timestamp : (a as _CompletedFile).timestamp;
+        final bt = b is _ChatMessage ? b.timestamp : (b as _CompletedFile).timestamp;
+        return at.compareTo(bt);
+      });
+
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      itemCount: _messages.length,
+      itemCount: combined.length,
       itemBuilder: (context, index) {
-        return _buildMessageItem(_messages[index]);
+        final item = combined[index];
+        if (item is _ChatMessage) return _buildMessageItem(item);
+        return _buildFileBubble(item as _CompletedFile);
       },
     );
   }
@@ -692,6 +718,144 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  // ── 파일/이미지 버블 ──────────────────────────────────────────────────────────
+
+  Widget _buildFileBubble(_CompletedFile file) {
+    final isOutgoing = file.direction == TransferDirection.outgoing;
+    final isImage = file.meta.kind == TransferKind.image && file.data != null;
+
+    Widget content;
+    if (isImage) {
+      content = GestureDetector(
+        onTap: () => _showImageFullScreen(file),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.memory(
+            file.data!,
+            width: 200,
+            height: 200,
+            fit: BoxFit.cover,
+          ),
+        ),
+      );
+    } else {
+      content = GestureDetector(
+        onTap: file.data != null ? () => _saveFile(file) : null,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 240),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isOutgoing ? _outgoingBubble : _incomingBubble,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.insert_drive_file, color: Colors.white70, size: 28),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      file.meta.fileName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: _textPrimary, fontSize: 13),
+                    ),
+                    Text(
+                      _formatBytes(file.meta.fileSize),
+                      style: TextStyle(color: _textSecondary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        mainAxisAlignment:
+            isOutgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isOutgoing) const SizedBox(width: 4),
+          content,
+          if (isOutgoing) const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
+  void _showImageFullScreen(_CompletedFile file) {
+    if (file.data == null) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                child: Image.memory(file.data!, fit: BoxFit.contain),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded, color: Colors.white),
+                    tooltip: '저장',
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _saveFile(file);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveFile(_CompletedFile file) async {
+    if (file.data == null) return;
+    try {
+      final location = await getSaveLocation(
+        suggestedName: file.meta.fileName,
+        acceptedTypeGroups: const [XTypeGroup(label: 'all')],
+      );
+      if (location == null) return;
+      await File(location.path).writeAsBytes(file.data!);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('저장 완료')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('저장 실패: $e')),
+      );
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   // ── 입력바 ───────────────────────────────────────────────────────────────────
@@ -867,5 +1031,21 @@ class _ActiveTransfer {
     required this.progress,
     required this.direction,
     required this.targetNodeIdHex,
+  });
+}
+
+// ── 완료된 파일/이미지 모델 ─────────────────────────────────────────────────────
+
+class _CompletedFile {
+  final TransferMeta meta;
+  final Uint8List? data;
+  final TransferDirection direction;
+  final int timestamp;
+
+  _CompletedFile({
+    required this.meta,
+    this.data,
+    required this.direction,
+    required this.timestamp,
   });
 }
