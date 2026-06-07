@@ -42,6 +42,12 @@ class TransferService {
   final Map<TransferId, OutgoingTransfer> _outgoing = {};
   final Map<TransferId, IncomingTransfer> _incoming = {};
 
+  // 청크 ACK 대기 타이머 (tid → Timer)
+  final Map<TransferId, Timer> _ackTimers = {};
+
+  static const _ackTimeout = Duration(seconds: 15);
+  static const _maxRetries = 3;
+
   final StreamController<TransferEvent> _eventController =
       StreamController<TransferEvent>.broadcast();
 
@@ -74,6 +80,55 @@ class TransferService {
     _sendPacket = sendPacket;
   }
 
+  /// 진행 중인 발신/수신 전송을 취소한다.
+  void cancelTransfer(TransferId tid) {
+    _cancelAckTimer(tid);
+    if (_outgoing.containsKey(tid)) {
+      _outgoing.remove(tid);
+      _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.outgoing));
+    } else if (_incoming.containsKey(tid)) {
+      _incoming.remove(tid);
+      _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.incoming));
+    }
+    _log('cancelTransfer: $tid');
+  }
+
+  /// 모든 진행 중인 전송을 취소하고 상태를 초기화한다.
+  void cancelAll() {
+    for (final tid in [..._outgoing.keys, ..._incoming.keys]) {
+      cancelTransfer(tid);
+    }
+  }
+
+  void _cancelAckTimer(TransferId tid) {
+    _ackTimers.remove(tid)?.cancel();
+  }
+
+  void _startAckTimer(OutgoingTransfer transfer) {
+    _cancelAckTimer(transfer.meta.tid);
+    _ackTimers[transfer.meta.tid] = Timer(_ackTimeout, () {
+      _onAckTimeout(transfer);
+    });
+  }
+
+  void _onAckTimeout(OutgoingTransfer transfer) {
+    final tid = transfer.meta.tid;
+    if (!_outgoing.containsKey(tid)) return;
+
+    transfer.retryCount++;
+    _log('[DIAG-ACK] 타임아웃: tid=${tid.substring(0, 8)} chunk=${transfer.sentChunks - 1} retry=${transfer.retryCount}');
+
+    if (transfer.retryCount > _maxRetries) {
+      _outgoing.remove(tid);
+      _emit(TransferFailed(tid, reason: 'timeout after $_maxRetries retries', direction: TransferDirection.outgoing));
+      return;
+    }
+
+    // 마지막 보낸 청크를 재전송 (sentChunks를 하나 되돌려서 재시도)
+    transfer.sentChunks = (transfer.sentChunks - 1).clamp(0, transfer.meta.totalChunks);
+    _sendNextChunk(transfer);
+  }
+
   // ── 발신 ─────────────────────────────────────────────────────────────────────
 
   /// 파일 또는 이미지를 대상 노드에 전송한다.
@@ -99,11 +154,13 @@ class TransferService {
       kind: kind,
       imageIndex: imageIndex,
     );
+    _log('[DIAG-TX] sendFile: tid=${tid.substring(0, 8)} file=$fileName size=${data.length} chunks=$totalChunks chunkSize=$chunkSize');
 
     final transfer = OutgoingTransfer(
       meta: meta,
       data: data,
       targetNodeIdHex: targetNodeIdHex,
+      chunkSize: chunkSize,
     );
     _outgoing[tid] = transfer;
     _emit(TransferStarted(tid, meta: meta, direction: TransferDirection.outgoing));
@@ -126,7 +183,8 @@ class TransferService {
   Future<void> _sendNextChunk(OutgoingTransfer transfer) async {
     if (transfer.sentChunks >= transfer.meta.totalChunks) return;
     final idx = transfer.sentChunks;
-    final chunkSize = TransferChunkSize.ble;
+    final chunkSize = transfer.chunkSize;
+    _log('[DIAG-TX] 청크 전송: idx=$idx / ${transfer.meta.totalChunks} chunkSize=$chunkSize');
     final start = idx * chunkSize;
     final end = (start + chunkSize).clamp(0, transfer.data.length);
     final chunk = transfer.data.sublist(start, end);
@@ -150,6 +208,7 @@ class TransferService {
       progress: transfer.sentChunks / transfer.meta.totalChunks,
       direction: TransferDirection.outgoing,
     ));
+    _startAckTimer(transfer);
   }
 
   // ── 수신 패킷 처리 ────────────────────────────────────────────────────────────
@@ -159,9 +218,11 @@ class TransferService {
       final meta = TransferMeta.fromJson(
         jsonDecode(utf8.decode(packet.payload)) as Map<String, dynamic>,
       );
+      _log('[DIAG-RX] fileHeader: tid=${meta.tid} file=${meta.fileName} chunks=${meta.totalChunks}');
       final transfer = IncomingTransfer(meta: meta, senderNodeIdHex: senderNodeIdHex);
       _incoming[meta.tid] = transfer;
       _emit(TransferStarted(meta.tid, meta: meta, direction: TransferDirection.incoming));
+      _log('[DIAG-RX] ACK(-1) 발송 시작');
       _sendAck(meta.tid, senderNodeIdHex, chunk: -1);
     } catch (e) {
       _log('handleFileHeader error: $e');
@@ -215,9 +276,13 @@ class TransferService {
       final ok = ack['ok'] as bool? ?? true;
 
       final transfer = _outgoing[tid];
+      _log('[DIAG-ACK] ack 수신: tid=${tid.substring(0, 8)} chunk=$chunk ok=$ok transferExist=${transfer != null}');
       if (transfer == null) return;
+      _cancelAckTimer(tid);
+      transfer.retryCount = 0; // ACK 받으면 재시도 카운트 초기화
 
       if (!ok) {
+        _cancelAckTimer(tid);
         transfer.status = TransferStatus.failed;
         _outgoing.remove(tid);
         _emit(TransferFailed(tid, reason: 'ack not ok', direction: TransferDirection.outgoing));
@@ -226,12 +291,14 @@ class TransferService {
 
       if (chunk == -1) {
         // 헤더 ack → 첫 청크 전송 시작
+        _log('[DIAG-ACK] 헤더ACK → 첫 청크 전송');
         _sendNextChunk(transfer);
         return;
       }
 
       transfer.ackedChunks++;
       if (transfer.isComplete) {
+        _cancelAckTimer(tid);
         transfer.status = TransferStatus.done;
         _outgoing.remove(tid);
         _emit(TransferCompleted(

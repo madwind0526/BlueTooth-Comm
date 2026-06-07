@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
@@ -593,7 +594,9 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: _activeTransfers.values.map((t) {
+        children: _activeTransfers.entries.map((entry) {
+          final tid = entry.key;
+          final t = entry.value;
           final isOut = t.direction == TransferDirection.outgoing;
           final label = isOut ? '전송 중' : '수신 중';
           final icon = t.meta.kind == TransferKind.image
@@ -635,6 +638,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   style: const TextStyle(
                     color: Color(0xFF9E9EB8),
                     fontSize: 10,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    TransferService().cancelTransfer(tid);
+                    MessagingService().cancelTransfer(tid);
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Icon(Icons.close, size: 14, color: Color(0xFFF87171)),
                   ),
                 ),
               ],
@@ -888,15 +901,26 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _saveFile(_CompletedFile file) async {
     if (file.data == null) return;
     try {
-      final location = await getSaveLocation(
-        suggestedName: file.meta.fileName,
-        acceptedTypeGroups: const [XTypeGroup(label: 'all')],
-      );
-      if (location == null) return;
-      await File(location.path).writeAsBytes(file.data!);
+      String savedPath;
+      if (Platform.isAndroid) {
+        // Android: Downloads 폴더에 직접 저장
+        final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+        final destFile = File('${dir.path}/${file.meta.fileName}');
+        await destFile.writeAsBytes(file.data!);
+        savedPath = destFile.path;
+      } else {
+        // Windows/기타: 파일 저장 다이얼로그
+        final location = await getSaveLocation(
+          suggestedName: file.meta.fileName,
+          acceptedTypeGroups: const [XTypeGroup(label: 'all')],
+        );
+        if (location == null) return;
+        await File(location.path).writeAsBytes(file.data!);
+        savedPath = location.path;
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('저장 완료')),
+        SnackBar(content: Text('저장 완료: $savedPath')),
       );
     } catch (e) {
       if (!mounted) return;

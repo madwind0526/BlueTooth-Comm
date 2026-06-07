@@ -719,11 +719,16 @@ class MessagingService {
     TransferKind kind = TransferKind.file,
     int imageIndex = 0,
   }) async {
+    final isLan = _lan.hasPeer(targetNodeIdHex);
+    final isBle = _deviceToNodeHex.values.contains(targetNodeIdHex);
+    _log('[DIAG-TX] sendFile 요청: target=${targetNodeIdHex.substring(0, 8)} isLAN=$isLan isBLE=$isBle isDirect=${isDirectlyConnected(targetNodeIdHex)}');
     if (!isDirectlyConnected(targetNodeIdHex)) {
-      _log('sendFile 차단: $targetNodeIdHex 직접 연결 없음');
+      _log('[DIAG-TX] sendFile 차단: 직접 연결 없음 (LAN peers: ${_lan.connectedPeerIds}, BLE map: ${_deviceToNodeHex.values.take(3)})');
       return null;
     }
     try {
+      final chunkSize = isLan ? TransferChunkSize.lan : TransferChunkSize.ble;
+      _log('[DIAG-TX] sendFile chunkSize=$chunkSize (LAN=$isLan)');
       return await _transfer.sendFile(
         data: data,
         fileName: fileName,
@@ -731,11 +736,17 @@ class MessagingService {
         targetNodeIdHex: targetNodeIdHex,
         kind: kind,
         imageIndex: imageIndex,
+        chunkSize: chunkSize,
       );
     } catch (e) {
       _log('sendFile 오류: $e');
       return null;
     }
+  }
+
+  /// 진행 중인 전송을 취소한다 (UI에서 X 버튼 클릭 시 호출).
+  void cancelTransfer(String tid) {
+    _transfer.cancelTransfer(tid);
   }
 
   // ── 수신 패킷 처리 ───────────────────────────────────────────────────────────
@@ -855,7 +866,9 @@ class MessagingService {
         // Phase 2 구현 예정
         _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
       case MsgType.fileHeader:
-        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+        final fhForMe = _bytesEqual(packet.targetId, _identity.myNodeId);
+        _log('[DIAG-RX] fileHeader 도착: forMe=$fhForMe sender=${_hexShort(packet.senderId)}');
+        if (fhForMe) {
           _transfer.handleFileHeader(packet, _hex(packet.senderId));
         }
       case MsgType.fileChunk:
@@ -863,7 +876,9 @@ class MessagingService {
           _transfer.handleFileChunk(packet, _hex(packet.senderId));
         }
       case MsgType.fileAck:
-        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+        final faForMe = _bytesEqual(packet.targetId, _identity.myNodeId);
+        _log('[DIAG-RX] fileAck 도착: forMe=$faForMe sender=${_hexShort(packet.senderId)}');
+        if (faForMe) {
           _transfer.handleFileAck(packet, _hex(packet.senderId));
         }
     }

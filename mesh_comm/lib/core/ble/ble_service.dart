@@ -458,6 +458,12 @@ class BleService {
     final hasMeshName = localName == 'MeshComm';
     final hasMeshNodeId = nodeId != null;
 
+    // [DIAG-BLE] Windows에서 광고 데이터 상세 로그
+    if (Platform.isWindows && (hasMeshService || hasMeshName || hasMeshNodeId || localName.isNotEmpty)) {
+      _log('[DIAG-BLE-WIN] device=$deviceId name="$localName" '
+          'svcUuids=$serviceUuids hasSvc=$hasMeshService hasName=$hasMeshName hasNodeId=$hasMeshNodeId');
+    }
+
     if (!hasMeshService && !hasMeshName && !hasMeshNodeId) {
       return; // MeshComm 앱이 아닌 기기 무시
     }
@@ -551,6 +557,8 @@ class BleService {
       _log('Connected to $deviceId');
     } catch (e) {
       _log('_connectToDevice error ($deviceId): $e');
+      // GATT 슬롯 반환 — catch 시 disconnect하지 않으면 OS 슬롯이 점유 상태로 남음
+      try { await device.disconnect(); } catch (_) {}
     } finally {
       _connectingDevices.remove(deviceId);
     }

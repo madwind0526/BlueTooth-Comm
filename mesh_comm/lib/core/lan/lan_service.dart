@@ -215,18 +215,33 @@ class LanService {
         }
       },
       onDone: () {
-        if (resolvedId != null) _removePeer(resolvedId!);
+        // 이 소켓이 _peers에 등록된 소켓과 같을 때만 제거
+        // (중복 연결 감지로 파괴된 소켓의 onDone이 valid 피어를 지우는 race 방지)
+        if (resolvedId != null && _peers[resolvedId] == socket) {
+          _log('[DIAG-LAN] onDone → removePeer: $resolvedId');
+          _removePeer(resolvedId!);
+        } else if (resolvedId != null) {
+          _log('[DIAG-LAN] onDone SKIPPED (stale socket): $resolvedId');
+        }
         socket.destroy();
       },
       onError: (e) {
-        _log('Socket error ($resolvedId): $e');
-        if (resolvedId != null) _removePeer(resolvedId!);
+        _log('[DIAG-LAN] Socket error ($resolvedId): $e');
+        if (resolvedId != null && _peers[resolvedId] == socket) {
+          _removePeer(resolvedId!);
+        }
         socket.destroy();
       },
       cancelOnError: true,
     );
 
     if (knownNodeIdHex != null) {
+      // 동시 오픈 레이스: incoming이 이미 등록됐으면 outgoing을 버린다.
+      if (_peers.containsKey(knownNodeIdHex)) {
+        _log('[DIAG-LAN] Outgoing duplicate discarded (incoming already registered): $knownNodeIdHex');
+        socket.destroy();
+        return;
+      }
       _peers[knownNodeIdHex] = socket;
       _buffers[knownNodeIdHex] = buffer;
       _notifyChange();

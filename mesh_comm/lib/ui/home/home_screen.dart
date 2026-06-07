@@ -27,6 +27,8 @@ import 'package:mesh_comm/features/messaging/virtual_mesh_simulator.dart';
 import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
+import 'package:mesh_comm/features/transfer/transfer_model.dart';
+import 'package:mesh_comm/features/transfer/transfer_service.dart';
 import 'package:mesh_comm/ui/chat/chat_screen.dart';
 import 'package:mesh_comm/ui/chat/group_chat_screen.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
@@ -107,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<ReceivedMessage>? _messageSubscription;
   StreamSubscription<TopologyResponse>? _topologySubscription;
   StreamSubscription<List<String>>? _lanPeersSubscription;
+  StreamSubscription<TransferEvent>? _transferSubscription;
   Timer? _chatCleanupTimer;
   List<Contact> _contacts = [];
   Set<String> _chatContactCodes = {};
@@ -149,6 +152,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadChatContactCodes();
       _loadUnreadCounts();
     });
+    _transferSubscription = TransferService().transferStream.listen((event) {
+      if (event is TransferCompleted && event.direction == TransferDirection.incoming) {
+        if (!mounted) return;
+        setState(() {
+          _unreadCounts[event.contactNodeIdHex] =
+              (_unreadCounts[event.contactNodeIdHex] ?? 0) + 1;
+        });
+      }
+    });
     _topologySubscription = MessagingService().topologyStream.listen((
       response,
     ) {
@@ -188,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _lanPeersSubscription?.cancel();
     _messageSubscription?.cancel();
     _topologySubscription?.cancel();
+    _transferSubscription?.cancel();
     _chatCleanupTimer?.cancel();
     _searchController
       ..removeListener(_refresh)

@@ -35,9 +35,29 @@
 - Attachment transfer is documented but not fully implemented; full files need a multi-chunk protocol.
 - Identity backup is now encrypted-only. Backup asks for a password, writes `*.enc.json`, and restore requires the same password. Old plaintext identity backups are intentionally rejected. The app does not store the backup password; restoring the node ID means restoring the full identity keypair, not only the short code.
 
-## Latest 2026-06-07
+## Latest 2026-06-07 (v1.0.W — 버그 수정 릴리스)
 
-- Current version: `v1.0.U`
+- **BLE 파일 전송 0% 원인 확정**: chunk 380B + 오버헤드 134B = 514B > BLE max 512B → ble chunk = 340
+- **LAN 동시 오픈 race 최종 수정**: outgoing 등록 시 incoming이 이미 있으면 outgoing 소켓 버림
+- **TransferService timeout/retry**: 청크 ACK 15초 대기, 최대 3회 재시도, 실패 시 TransferFailed
+- **TransferService cancelTransfer(tid)**: UI X 버튼으로 전송 취소 + 소켓 초기화
+- **Android 다운로드 수정**: getDownloadsDirectory() 사용 (getSavePath 미구현 오류 해결)
+- **파일 수신 후 안읽음 뱃지**: home_screen이 TransferService.transferStream 구독 → incoming 완료 시 _unreadCounts+1
+- **PC BLE 0 원인 확정**: PC가 Android Peripheral에 연결 후 Android에서 send(PC)가 GATT write 실패 — Peripheral→Central notify 미구현 (별도 조사 필요)
+- 빌드: v1.0.W APK 74.7MB, Windows exe 빌드 성공. 전 기기 배포 완료.
+
+## Latest 2026-06-07 (v1.0.V)
+
+- Current version: `v1.0.V` (--dart-define=MESHCOMM_VERSION=1.0.V)
+- TransferStorageService: appSupportDir/mesh_files/<contactHex>/<tid>.bin+json 영구 저장
+- MessagingService: transferStream 구독 → TransferCompleted 시 자동 저장 (채팅창 닫혀있어도)
+- ChatScreen: initState에서 _loadStoredFiles() 복원 → S21(수신자) 이미지 미표시 버그 수정
+- 이미지 전체화면: barrierDismissible false + 저장/삭제/닫기 버튼 (삭제=디스크+목록 제거)
+- ConnectionBadge: "2 LAN / 1 BLE" / "N LAN" / "M BLE" / "0 연결" 분리 표시
+- BLE chunk 380 bytes (0% 전송 멈춤 수정), Windows BLE withServices:[] (0 연결 수정)
+- APK 74.5MB, Windows exe — 빌드 성공, git push 완료 (hash: 1bb2f6c)
+
+## Latest 2026-06-07
 - LAN/Wi-Fi 전송 재구조화: `TransportKind.wifi` 제거, BLE 아닌 모든 네트워크 연결 = `TransportKind.lan`
 - LAN On/Off 토글 구현: `LanService.start()/stop()` 추가, 홈 LAN 버튼 클릭으로 On/Off 가능
 - LAN 초기 상태 `available: true, enabled: true` (서비스 자동 시작)
