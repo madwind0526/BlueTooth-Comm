@@ -2238,7 +2238,10 @@ class _FilterButton extends StatelessWidget {
             children: [
               Icon(icon, color: color, size: 20),
               const SizedBox(height: 4),
-              Text(label, style: TextStyle(color: color, fontSize: 10)),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(label, style: TextStyle(color: color, fontSize: 10)),
+              ),
             ],
           ),
         ),
@@ -4602,16 +4605,22 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                             Expanded(
                               child: OutlinedButton.icon(
                                 onPressed: widget.onBackupIdentity,
-                                icon: const Icon(Icons.backup_outlined),
-                                label: const Text('Backup'),
+                                icon: const Icon(Icons.backup_outlined, size: 18),
+                                label: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Backup'),
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: OutlinedButton.icon(
                                 onPressed: widget.onRestoreIdentity,
-                                icon: const Icon(Icons.restore_page_outlined),
-                                label: const Text('Restore'),
+                                icon: const Icon(Icons.restore_page_outlined, size: 18),
+                                label: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Restore'),
+                                ),
                               ),
                             ),
                           ],
@@ -4760,97 +4769,27 @@ class _ExportDialog extends StatefulWidget {
 class _ExportDialogState extends State<_ExportDialog> {
   bool _includeContacts = true;
   bool _includeConversations = false;
-  late List<bool> _selected;
-  @override
-  void initState() {
-    super.initState();
-    _selected = List.filled(widget.contacts.length, true);
-  }
 
-  List<Contact> get _selectedContacts {
-    if (!_includeContacts) return [];
-    return [
-      for (var i = 0; i < widget.contacts.length; i++)
-        if (_selected[i]) widget.contacts[i],
-    ];
-  }
-
-  /// null = 부분 선택, true = 전체, false = 없음
-  bool? get _allSelectedState {
-    if (_selected.isEmpty) return true;
-    final count = _selected.where((s) => s).length;
-    if (count == _selected.length) return true;
-    if (count == 0) return false;
-    return null;
-  }
-
-  bool get _canExport =>
-      (_includeContacts && _selectedContacts.isNotEmpty) ||
-      _includeConversations;
-
-  void _toggleAll(bool? v) {
-    final fill = v ?? true;
-    setState(() {
-      for (var i = 0; i < _selected.length; i++) {
-        _selected[i] = fill;
-      }
-    });
-  }
-
-  String _contactLabel(Contact c) {
-    if (c.displayName != null && c.displayName!.isNotEmpty) return c.displayName!;
-    return c.nodeId.take(4).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-  }
+  bool get _canExport => _includeContacts || _includeConversations;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Export'),
-      contentPadding: const EdgeInsets.fromLTRB(0, 16, 0, 0),
-      content: SizedBox(
-        width: 320,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CheckboxListTile(
-                title: const Text('연락처'),
-                value: _includeContacts,
-                onChanged: (v) => setState(() => _includeContacts = v!),
-              ),
-              if (_includeContacts) ...[
-                CheckboxListTile(
-                  title: const Text(
-                    '전체 선택',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  value: _allSelectedState,
-                  tristate: true,
-                  onChanged: _toggleAll,
-                  contentPadding: const EdgeInsets.only(left: 24, right: 16),
-                ),
-                ...List.generate(widget.contacts.length, (i) {
-                  return CheckboxListTile(
-                    title: Text(
-                      _contactLabel(widget.contacts[i]),
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    value: _selected[i],
-                    dense: true,
-                    onChanged: (v) => setState(() => _selected[i] = v!),
-                    contentPadding: const EdgeInsets.only(left: 40, right: 16),
-                  );
-                }),
-              ],
-              CheckboxListTile(
-                title: const Text('대화'),
-                value: _includeConversations,
-                onChanged: (v) => setState(() => _includeConversations = v!),
-              ),
-            ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CheckboxListTile(
+            title: const Text('연락처'),
+            value: _includeContacts,
+            onChanged: (v) => setState(() => _includeContacts = v!),
           ),
-        ),
+          CheckboxListTile(
+            title: const Text('대화'),
+            value: _includeConversations,
+            onChanged: (v) => setState(() => _includeConversations = v!),
+          ),
+        ],
       ),
       actions: [
         TextButton(
@@ -4860,7 +4799,7 @@ class _ExportDialogState extends State<_ExportDialog> {
         FilledButton(
           onPressed: _canExport
               ? () => Navigator.pop(context, (
-                    contacts: _selectedContacts,
+                    contacts: _includeContacts ? widget.contacts : <Contact>[],
                     includeConversations: _includeConversations,
                   ))
               : null,
@@ -4922,14 +4861,14 @@ class _ImportDialogState extends State<_ImportDialog> {
         children: [
           _ImportRadioTile(
             title: '연락처',
-            subtitle: '현재 연락처에 추가 (중복 제외)',
+            subtitle: '현재 연락처에 추가',
             value: 'contacts',
             selected: _type == 'contacts',
             onTap: () => setState(() => _type = 'contacts'),
           ),
           _ImportRadioTile(
             title: '대화',
-            subtitle: '기존 대화를 지우고 파일로 교체',
+            subtitle: '기존 대화를 교체',
             value: 'conversations',
             selected: _type == 'conversations',
             onTap: () => setState(() => _type = 'conversations'),
