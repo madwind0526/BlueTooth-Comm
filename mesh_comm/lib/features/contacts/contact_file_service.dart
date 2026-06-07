@@ -16,59 +16,70 @@ class ContactFileService {
 
   Future<String> exportToJson() async {
     final contacts = await _contacts.getAllContacts();
-    return exportBackupToJson(contacts: contacts, includeConversations: false);
+    return exportContactsToJson(contacts);
   }
 
   Future<int> importFromJson(String rawJson) async {
-    return importContactsFromBackupJson(rawJson);
+    return importContactsFromJson(rawJson);
   }
 
-  /// 선택된 연락처 및/또는 대화를 하나의 backup JSON으로 export.
-  Future<String> exportBackupToJson({
-    required List<Contact> contacts,
-    required bool includeConversations,
-  }) async {
-    final payload = <String, dynamic>{
-      'format': 'mesh_comm_backup',
+  /// 선택된 연락처를 독립 파일 JSON으로 export.
+  Future<String> exportContactsToJson(List<Contact> contacts) async {
+    final payload = {
+      'format': 'mesh_comm_contacts',
       'version': 1,
       'exportedAt': DateTime.now().toIso8601String(),
+      'contacts': contacts.map(_contactToJson).toList(),
     };
-    if (contacts.isNotEmpty) {
-      payload['contacts'] = contacts.map(_contactToJson).toList();
-    }
-    if (includeConversations) {
-      final rows = await _db.exportAllMessagesRaw();
-      payload['conversations'] = {
-        'version': 1,
-        'messages': rows.map(_messageRowToJson).toList(),
-      };
-    }
     return const JsonEncoder.withIndent('  ').convert(payload);
   }
 
-  /// contacts 섹션을 import (기존 연락처에 merge, 중복 skip).
-  Future<int> importContactsFromBackupJson(String rawJson) async {
+  /// 대화(메시지)를 독립 파일 JSON으로 export.
+  Future<String> exportConversationsToJson() async {
+    final rows = await _db.exportAllMessagesRaw();
+    final payload = {
+      'format': 'mesh_comm_conversations',
+      'version': 1,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'messages': rows.map(_messageRowToJson).toList(),
+    };
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  /// 연락처 파일에서 import (기존 연락처에 merge, 중복 skip).
+  Future<int> importContactsFromJson(String rawJson) async {
     final decoded = jsonDecode(rawJson);
     if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('Invalid backup file.');
+      throw const FormatException('연락처 파일이 올바르지 않습니다.');
     }
     final contacts = decoded['contacts'];
     if (contacts is! List) {
-      throw const FormatException('No contacts data found in file.');
+      throw const FormatException('파일에 연락처 데이터가 없습니다. 연락처 파일을 선택하세요.');
     }
     return _importContactsList(contacts);
   }
 
-  /// conversations 섹션을 import (기존 메시지 전부 삭제 후 교체).
+  // backward-compat alias
+  Future<int> importContactsFromBackupJson(String rawJson) =>
+      importContactsFromJson(rawJson);
+
+  /// 대화 파일에서 import (기존 메시지 전부 삭제 후 교체).
   Future<int> importConversationsFromJson(String rawJson) async {
     final decoded = jsonDecode(rawJson);
     if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('Invalid backup file.');
+      throw const FormatException('대화 파일이 올바르지 않습니다.');
     }
-    final convoSection = decoded['conversations'] as Map<String, dynamic>?;
-    final messages = convoSection?['messages'] as List?;
+    // 독립 포맷: { "format": "mesh_comm_conversations", "messages": [...] }
+    // 구버전 통합 포맷: { "conversations": { "messages": [...] } }
+    final List? messages;
+    if (decoded['format'] == 'mesh_comm_conversations') {
+      messages = decoded['messages'] as List?;
+    } else {
+      final section = decoded['conversations'] as Map<String, dynamic>?;
+      messages = section?['messages'] as List?;
+    }
     if (messages == null) {
-      throw const FormatException('No conversations data found in file.');
+      throw const FormatException('파일에 대화 데이터가 없습니다. 대화 파일을 선택하세요.');
     }
     final rows = messages
         .whereType<Map<String, dynamic>>()

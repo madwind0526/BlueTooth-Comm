@@ -1317,33 +1317,52 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (result == null) return;
 
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final saved = <String>[];
+
     try {
-      final json = await _contactFileService.exportBackupToJson(
-        contacts: result.contacts,
-        includeConversations: result.includeConversations,
-      );
-      final filename =
-          'mesh_comm_backup_${DateTime.now().millisecondsSinceEpoch}.json';
-      String savedPath;
-      try {
-        final location = await getSaveLocation(
-          suggestedName: filename,
-          acceptedTypeGroups: const [
-            XTypeGroup(label: 'MeshComm backup', extensions: ['json']),
-          ],
-        );
-        if (location == null) return;
-        await File(location.path).writeAsString(json);
-        savedPath = location.path;
-      } catch (_) {
-        final dir = await getApplicationDocumentsDirectory();
-        final file = File(p.join(dir.path, filename));
-        await file.writeAsString(json);
-        savedPath = file.path;
+      // ── 연락처 파일 ────────────────────────────────────────────
+      if (result.contacts.isNotEmpty) {
+        final json = await _contactFileService.exportContactsToJson(result.contacts);
+        final name = 'mesh_comm_contacts_$ts.json';
+        final path = await _saveJsonFile(json, name);
+        if (path == null) return; // 사용자가 취소
+        saved.add(path);
       }
-      _showMessage('Export 완료: $savedPath');
+
+      // ── 대화 파일 ─────────────────────────────────────────────
+      if (result.includeConversations) {
+        final json = await _contactFileService.exportConversationsToJson();
+        final name = 'mesh_comm_conversations_$ts.json';
+        final path = await _saveJsonFile(json, name);
+        if (path == null) return; // 사용자가 취소
+        saved.add(path);
+      }
+
+      if (saved.isNotEmpty) {
+        _showMessage('Export 완료 (${saved.length}개 파일)');
+      }
     } catch (e) {
       _showMessage('Export 실패: $e');
+    }
+  }
+
+  Future<String?> _saveJsonFile(String json, String filename) async {
+    try {
+      final location = await getSaveLocation(
+        suggestedName: filename,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
+      );
+      if (location == null) return null;
+      await File(location.path).writeAsString(json);
+      return location.path;
+    } catch (_) {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(p.join(dir.path, filename));
+      await file.writeAsString(json);
+      return file.path;
     }
   }
 

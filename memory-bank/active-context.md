@@ -50,7 +50,11 @@
 - `isDirectlyConnected(nodeIdHex)`: BLE 직접 연결 또는 LAN peer 여부 확인
 - `sendFile` 직접 연결 없으면 즉시 null 반환
 - UI: 페이퍼클립 아이콘 제거, 드롭다운에 파일/이미지 항목 추가 (선택 즉시 picker 오픈)
-- 파일/이미지 선택 전 직접 연결 확인 → 미연결 시 SnackBar "직접 연결된 경우에만 파일/이미지 전송이 가능합니다."
+- Export: checkbox 다이얼로그로 연락처(개별+전체선택 tristate) + 대화 병렬 선택
+- Import: 연락처(merge) / 대화(replace) 라디오 선택 후 파일 picker
+- Settings: "연락처 전부 지우기" 버튼 추가 (대화 기록 유지)
+- DB 추가: `exportAllMessagesRaw()`, `importMessagesRaw()`, `deleteAllSavedContacts()`
+- git commit + push 완료 (hash: 66b6588)
 
 ## Current Focus
 
