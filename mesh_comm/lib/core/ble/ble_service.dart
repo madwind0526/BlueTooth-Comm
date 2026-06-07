@@ -220,11 +220,13 @@ class BleService {
         }
       }, onError: (e) => _log('scanResults error: $e'));
 
-      // Windows에서 withServices 필터가 작동하지 않을 수 있어 필터 없이 스캔
+      // Windows: withServices 필터가 WinRT BLE 광고 형식에 따라 동작하지 않을 수
+      // 있음 → 필터 없이 전체 스캔 후 _handleScanResult에서 MeshComm 기기 식별.
+      // Android: serviceUuid 필터로 MeshComm 기기만 빠르게 발견.
       await FlutterBluePlus.startScan(
         timeout: BleConstants.scanDuration,
-        withServices: [Guid(BleConstants.serviceUuid)],
-        androidScanMode: AndroidScanMode.lowLatency, // Android: 빠른 발견
+        withServices: Platform.isWindows ? [] : [Guid(BleConstants.serviceUuid)],
+        androidScanMode: AndroidScanMode.lowLatency,
       );
 
       // 타임아웃 후 자동 재스캔 (연결 유지를 위해 주기적으로 반복)
