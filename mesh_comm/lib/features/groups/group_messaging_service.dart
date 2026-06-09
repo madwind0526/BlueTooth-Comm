@@ -97,8 +97,9 @@ class GroupMessagingService {
     });
   }
 
-  /// 그룹 메시지를 모든 직접 연결된 멤버에게 전송한다.
-  /// [connectedChecker]: nodeIdHex → 직접 연결 여부
+  /// 그룹 메시지를 모든 멤버에게 전송한다.
+  /// 직접 연결 여부 무관: relay가 비연결 멤버까지 전달한다.
+  /// [connectedChecker]: 파일/이미지 TransferService 전송 시 사용 (text 전송에는 미사용)
   Future<int> sendGroupMessage({
     required ChatGroup group,
     required String text,
@@ -111,7 +112,7 @@ class GroupMessagingService {
     var sent = 0;
     for (final member in group.members) {
       if (member.nodeIdHex == myHex) continue;
-      if (!connectedChecker(member.nodeIdHex)) continue;
+      // 직접 연결 체크 제거: broadcast + relay로 비연결 멤버에도 전달
       final ok = await _send(member.nodeId, MsgType.groupMessage, {
         'gid': group.groupId,
         'sid': myHex,

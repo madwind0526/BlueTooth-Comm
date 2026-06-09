@@ -207,6 +207,66 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  void _showMemberList() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E).withAlpha(230),
+        title: Text(
+          '${_group.name} 그룹원 (${_group.memberCount}명)',
+          style: const TextStyle(fontSize: 15),
+        ),
+        content: SizedBox(
+          width: 280,
+          height: 300,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black38,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: _group.members.length,
+              itemBuilder: (_, i) {
+                final m = _group.members[i];
+                final isLeader = _group.isLeader(m.nodeId);
+                final name = _senderName(m.nodeId);
+                return ListTile(
+                  dense: true,
+                  leading: Icon(
+                    Icons.person_outline,
+                    size: 20,
+                    color: isLeader ? Colors.orange : Colors.grey,
+                  ),
+                  title: Text(name, style: const TextStyle(fontSize: 14)),
+                  trailing: isLeader
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withAlpha(50),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            '방장',
+                            style: TextStyle(fontSize: 11, color: Colors.orange),
+                          ),
+                        )
+                      : null,
+                );
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _inviteMember() async {
     final unconnected = widget.contacts.where((c) {
       if (_bytesEqual(c.nodeId, IdentityService().myNodeId)) return false;
@@ -394,6 +454,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ],
       ),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.group_outlined),
+          onPressed: _showMemberList,
+          tooltip: '그룹원 보기',
+        ),
         IconButton(
           icon: const Icon(Icons.person_add_outlined),
           onPressed: _inviteMember,

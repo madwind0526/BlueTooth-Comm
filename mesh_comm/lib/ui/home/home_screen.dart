@@ -49,7 +49,7 @@ enum _ContactAction {
   delete,
 }
 
-enum _GroupAction { rename, delete }
+enum _GroupAction { viewMembers, rename, delete }
 
 enum _HomeSection { home, search, scan }
 
@@ -1092,6 +1092,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     switch (action) {
+      case _GroupAction.viewMembers:
+        _showGroupMembersDialog(group);
       case _GroupAction.rename:
         await _renameChatGroup(group);
       case _GroupAction.delete:
@@ -1105,6 +1107,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _GroupAction action,
   ) async {
     switch (action) {
+      case _GroupAction.viewMembers:
+        _showGroupMembersDialog(group);
       case _GroupAction.rename:
         final name = await _askForText(
           title: 'Demo group rename',
@@ -1125,6 +1129,74 @@ class _HomeScreenState extends State<HomeScreen> {
               .toList();
         });
     }
+  }
+
+  void _showGroupMembersDialog(ChatGroup group) {
+    final contacts = _settings.demoMode ? _demoSavedContacts : _contacts;
+    String resolveName(String hex) {
+      for (final c in contacts) {
+        if (contactCode(c) == hex) return contactDisplayName(c);
+      }
+      return hex.length >= 8 ? hex.substring(0, 8) : hex;
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E).withAlpha(230),
+        title: Text(
+          '${group.name} 그룹원 (${group.memberCount}명)',
+          style: const TextStyle(fontSize: 15),
+        ),
+        content: SizedBox(
+          width: 280,
+          height: 300,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black38,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: group.members.length,
+              itemBuilder: (_, i) {
+                final m = group.members[i];
+                final isLeader = group.isLeader(m.nodeId);
+                final name = resolveName(m.nodeIdHex);
+                return ListTile(
+                  dense: true,
+                  leading: Icon(
+                    Icons.person_outline,
+                    size: 20,
+                    color: isLeader ? Colors.orange : Colors.grey,
+                  ),
+                  title: Text(name, style: const TextStyle(fontSize: 14)),
+                  trailing: isLeader
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withAlpha(50),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            '방장',
+                            style: TextStyle(fontSize: 11, color: Colors.orange),
+                          ),
+                        )
+                      : null,
+                );
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _renameContact(Contact contact) async {
@@ -1438,6 +1510,18 @@ class _HomeScreenState extends State<HomeScreen> {
       isSaved: isSaved ?? contact.isSaved,
       userLevel: userLevel ?? contact.userLevel,
     );
+  }
+
+  String _resolveContactName(String hex) {
+    final contacts = _settings.demoMode ? _demoSavedContacts : _contacts;
+    for (final c in contacts) {
+      if (contactCode(c) == hex) return contactDisplayName(c);
+    }
+    final myHex = IdentityService().myNodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    if (hex == myHex) return _settings.displayName.isNotEmpty ? _settings.displayName : 'Me';
+    return hex.length >= 8 ? hex.substring(0, 8) : hex;
   }
 
   Future<void> _renameChatGroup(ChatGroup group) async {
@@ -2114,6 +2198,7 @@ class _HomeScreenState extends State<HomeScreen> {
         groups: groups,
         onTap: _openGroupChat,
         onAction: _handleGroupAction,
+        nameResolver: _resolveContactName,
       );
     }
 
@@ -2168,6 +2253,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   group: group,
                   onTap: () => _openGroupChat(group),
                   onAction: (action) => _handleGroupAction(group, action),
+                  nameResolver: _resolveContactName,
                 ),
               if (contacts.isNotEmpty) const _SectionLabel(label: 'Contacts'),
               for (final contact in contacts)
@@ -4916,11 +5002,13 @@ class _ChatGroupList extends StatelessWidget {
   final List<ChatGroup> groups;
   final ValueChanged<ChatGroup> onTap;
   final void Function(ChatGroup, _GroupAction) onAction;
+  final String Function(String hex) nameResolver;
 
   const _ChatGroupList({
     required this.groups,
     required this.onTap,
     required this.onAction,
+    required this.nameResolver,
   });
 
   @override
@@ -4939,6 +5027,7 @@ class _ChatGroupList extends StatelessWidget {
             group: group,
             onTap: () => onTap(group),
             onAction: (action) => onAction(group, action),
+            nameResolver: nameResolver,
           ),
       ],
     );
@@ -4949,11 +5038,13 @@ class _ChatGroupTile extends StatelessWidget {
   final ChatGroup group;
   final VoidCallback onTap;
   final ValueChanged<_GroupAction> onAction;
+  final String Function(String hex) nameResolver;
 
   const _ChatGroupTile({
     required this.group,
     required this.onTap,
     required this.onAction,
+    required this.nameResolver,
   });
 
   @override
@@ -4989,7 +5080,7 @@ class _ChatGroupTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
-        '${group.memberCount}명',
+        '${group.memberCount}명 · Lead: ${nameResolver(group.leaderHex)}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 11),
@@ -4998,6 +5089,8 @@ class _ChatGroupTile extends StatelessWidget {
         tooltip: 'Group 메뉴',
         onSelected: onAction,
         itemBuilder: (context) => const [
+          PopupMenuItem(value: _GroupAction.viewMembers, child: Text('그룹원 보기')),
+          PopupMenuDivider(),
           PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
           PopupMenuDivider(),
           PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
