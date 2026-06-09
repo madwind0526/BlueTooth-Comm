@@ -1,7 +1,26 @@
 import 'package:mesh_comm/features/contacts/contact_model.dart';
+import 'package:mesh_comm/features/groups/chat_group_model.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 
 enum HomeFilter { notices, all, groups, favorites, chats }
+
+/// ChatGroup을 검색한다.
+List<ChatGroup> searchChatGroups(
+  Iterable<ChatGroup> groups,
+  String query,
+) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return List<ChatGroup>.from(groups);
+  return groups
+      .where((g) => g.name.toLowerCase().contains(normalized))
+      .toList();
+}
+
+/// ChatGroup의 방장 이름을 결합하여 subtitle을 생성한다.
+String groupSubtitle(ChatGroup group, String Function(String nodeIdHex) nameResolver) {
+  final leadName = nameResolver(group.leaderHex);
+  return '${group.memberCount}명 · Lead: $leadName';
+}
 
 class LocalContactGroup {
   final String name;

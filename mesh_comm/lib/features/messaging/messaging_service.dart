@@ -21,6 +21,8 @@ import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
 
+import 'package:mesh_comm/features/groups/group_messaging_service.dart';
+
 import 'message_policy.dart';
 import 'topology_message.dart';
 
@@ -281,6 +283,9 @@ class MessagingService {
         );
       }
     });
+
+    // GroupMessagingService에 전송 함수 주입
+    GroupMessagingService().setSendFunction(sendGroupControlPacket);
 
     // KEY_ANNOUNCE 즉시 브로드캐스트 (R-10)
     await broadcastKeyAnnounce();
@@ -913,14 +918,34 @@ class MessagingService {
         if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
           _transfer.handleFileCancel(packet);
         }
+      case MsgType.groupInvite:
+      case MsgType.groupInviteResp:
+      case MsgType.groupMessage:
+      case MsgType.groupMemberUpdate:
+      case MsgType.groupLeave:
+        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+          final decrypted = await _decryptGroupPayload(packet);
+          if (decrypted != null) {
+            await GroupMessagingService().handleIncomingPacket(
+              packet,
+              packet.senderId,
+              decrypted,
+            );
+          }
+        }
     }
 
     // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
-    // 파일 패킷은 직접 연결 전용 — relay하지 않는다.
+    // 파일/그룹 패킷은 직접 연결 전용 — relay하지 않는다.
     if (packet.msgType == MsgType.fileHeader ||
         packet.msgType == MsgType.fileChunk ||
         packet.msgType == MsgType.fileAck ||
-        packet.msgType == MsgType.fileCancel) {
+        packet.msgType == MsgType.fileCancel ||
+        packet.msgType == MsgType.groupInvite ||
+        packet.msgType == MsgType.groupInviteResp ||
+        packet.msgType == MsgType.groupMessage ||
+        packet.msgType == MsgType.groupMemberUpdate ||
+        packet.msgType == MsgType.groupLeave) {
       return;
     }
 
@@ -1368,6 +1393,62 @@ class MessagingService {
   // ── 리소스 해제 ─────────────────────────────────────────────────────────────
 
   /// 타이머와 Stream 컨트롤러를 해제한다. 앱 종료 시 호출.
+  // ── Group control packets ────────────────────────────────────────────────
+
+  /// 그룹 제어 패킷을 E2E 암호화하여 전송한다.
+  /// GroupMessagingService.setSendFunction()에 주입되는 함수.
+  Future<bool> sendGroupControlPacket(
+    Uint8List targetNodeId,
+    MsgType type,
+    String jsonPayload,
+  ) async {
+    try {
+      final targetEncKey = await _contacts.getEncryptionPublicKey(targetNodeId);
+      if (targetEncKey == null) return false;
+
+      final sharedSecret = await _crypto.computeSharedSecret(
+        _identity.myEncryptionPrivateKeySeed,
+        targetEncKey,
+      );
+      final plain = Uint8List.fromList(utf8.encode(jsonPayload));
+      final encrypted = await _crypto.encrypt(plain, sharedSecret);
+      final packet = MeshPacket.create(
+        senderId: _identity.myNodeId,
+        targetId: targetNodeId,
+        msgType: type,
+        payload: encrypted,
+      );
+      packet.signature = await _crypto.sign(
+        packet.toSignableBytes(),
+        _identity.myPrivateKeySeed,
+      );
+      await _broadcastPacketWithRetry(packet);
+      return true;
+    } catch (e) {
+      _log('sendGroupControlPacket error: $e');
+      return false;
+    }
+  }
+
+  Future<String?> _decryptGroupPayload(MeshPacket packet) async {
+    try {
+      final senderEncKey = await _contacts.getEncryptionPublicKey(packet.senderId);
+      if (senderEncKey == null) return null;
+      final sharedSecret = await _crypto.computeSharedSecret(
+        _identity.myEncryptionPrivateKeySeed,
+        senderEncKey,
+      );
+      final payload = packet.payload;
+      if (payload == null) return null;
+      final plain = await _crypto.decrypt(payload, sharedSecret);
+      if (plain == null) return null;
+      return utf8.decode(plain);
+    } catch (e) {
+      _log('_decryptGroupPayload error: $e');
+      return null;
+    }
+  }
+
   Future<void> markMessageDisplayed(ReceivedMessage message) async {
     final ttlMs = message.readTtlMs;
     if (ttlMs == null) return;

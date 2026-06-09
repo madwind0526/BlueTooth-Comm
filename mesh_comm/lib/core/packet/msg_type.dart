@@ -39,7 +39,22 @@ enum MsgType {
   fileAck(0x0B),
 
   /// 파일 전송 취소 (전송 ID). 송신·수신 양쪽 모두 보낼 수 있다.
-  fileCancel(0x0C);
+  fileCancel(0x0C),
+
+  /// 그룹 채팅 초대 (inviter → target)
+  groupInvite(0x0D),
+
+  /// 그룹 초대 응답 (target → inviter): accept/reject
+  groupInviteResp(0x0E),
+
+  /// 그룹 메시지 (sender → each member individually)
+  groupMessage(0x0F),
+
+  /// 그룹 멤버 변경 공지 (leader → all members): add/remove/leader_change
+  groupMemberUpdate(0x10),
+
+  /// 그룹 나가기 (member → all members)
+  groupLeave(0x11);
 
   final int value;
   const MsgType(this.value);

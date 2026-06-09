@@ -30,6 +30,9 @@ import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
+import 'package:mesh_comm/features/groups/chat_group_model.dart';
+import 'package:mesh_comm/features/groups/group_messaging_service.dart';
+import 'package:mesh_comm/features/groups/group_service.dart';
 import 'package:mesh_comm/ui/chat/chat_screen.dart';
 import 'package:mesh_comm/ui/chat/group_chat_screen.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
@@ -39,14 +42,14 @@ enum _ContactAction {
   rename,
   toggleTrust,
   toggleFavorite,
-  setGroup,
+  inviteToGroup,
   setAvatar,
   setLevel,
   deleteMessages,
   delete,
 }
 
-enum _GroupAction { rename, toggleFavorite, delete }
+enum _GroupAction { rename, delete }
 
 enum _HomeSection { home, search, scan }
 
@@ -124,9 +127,18 @@ class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
   final _scanDepthController = TextEditingController(text: '3');
 
+  final _groupService = GroupService();
+  final _groupMessaging = GroupMessagingService();
+
   StreamSubscription<List<Contact>>? _contactsSubscription;
   StreamSubscription<AppSettings>? _settingsSubscription;
   StreamSubscription<ReceivedMessage>? _messageSubscription;
+  StreamSubscription<GroupInvite>? _groupInviteSubscription;
+  StreamSubscription<GroupMessage>? _groupMessageSubscription;
+  StreamSubscription<ChatGroup>? _groupUpdateSubscription;
+
+  List<ChatGroup> _chatGroups = [];
+  List<ChatGroup> _demoChatGroups = [];
   final List<_NoticeEntry> _notices = [];
   StreamSubscription<TopologyResponse>? _topologySubscription;
   StreamSubscription<List<String>>? _lanPeersSubscription;
@@ -247,6 +259,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _searchController.addListener(_refresh);
     _scanDepthController.addListener(_refresh);
+
+    _loadChatGroups();
+    _groupInviteSubscription = _groupMessaging.inviteStream.listen(
+      _handleIncomingGroupInvite,
+    );
+    _groupMessageSubscription = _groupMessaging.messageStream.listen((_) {
+      _loadChatGroups();
+    });
+    _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
+      _loadChatGroups();
+    });
   }
 
   @override
@@ -258,6 +281,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _topologySubscription?.cancel();
     _transferSubscription?.cancel();
     _chatCleanupTimer?.cancel();
+    _groupInviteSubscription?.cancel();
+    _groupMessageSubscription?.cancel();
+    _groupUpdateSubscription?.cancel();
     _searchController
       ..removeListener(_refresh)
       ..dispose();
@@ -265,6 +291,54 @@ class _HomeScreenState extends State<HomeScreen> {
       ..removeListener(_refresh)
       ..dispose();
     super.dispose();
+  }
+
+  Future<void> _loadChatGroups() async {
+    if (_settings.demoMode) {
+      if (mounted) setState(() {});
+      return;
+    }
+    final groups = await _groupService.getAllGroups();
+    if (!mounted) return;
+    setState(() => _chatGroups = groups);
+  }
+
+  void _handleIncomingGroupInvite(GroupInvite invite) {
+    if (!mounted) return;
+    final groupName = invite.groupName;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('그룹 초대'),
+        content: Text('[$groupName] 그룹에 초대되었습니다.\n수락하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _groupMessaging.sendInviteResponse(
+                groupId: invite.groupId,
+                toNodeId: invite.fromNodeId,
+                accepted: false,
+              );
+            },
+            child: const Text('거절'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _groupService.acceptInvite(invite);
+              await _groupMessaging.sendInviteResponse(
+                groupId: invite.groupId,
+                toNodeId: invite.fromNodeId,
+                accepted: true,
+              );
+              _loadChatGroups();
+            },
+            child: const Text('수락'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadNotices() async {
@@ -442,6 +516,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _demoContacts = const [];
       _demoSavedContacts = const [];
       _demoTopologyResponses = const [];
+      _demoChatGroups = [];
       return;
     }
 
@@ -451,6 +526,30 @@ class _HomeScreenState extends State<HomeScreen> {
     _demoTopologyResponses = scenario.responses;
     _activeTopologyRequestId = 'demo-large';
     _topologyResponses.clear();
+    _demoChatGroups = _buildDemoChatGroups(_demoSavedContacts);
+  }
+
+  List<ChatGroup> _buildDemoChatGroups(List<Contact> contacts) {
+    final grouped = <String, List<Contact>>{};
+    for (final c in contacts) {
+      final g = c.groupName;
+      if (g != null && g.isNotEmpty) grouped.putIfAbsent(g, () => []).add(c);
+    }
+    final myNodeId = IdentityService().myNodeId;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return grouped.entries.map((entry) {
+      final members = entry.value;
+      return ChatGroup(
+        groupId: 'demo-${entry.key.toLowerCase().replaceAll(' ', '-')}',
+        name: entry.key,
+        leaderId: members.first.nodeId,
+        members: [
+          GroupMember(nodeId: myNodeId, joinedAt: now),
+          ...members.map((c) => GroupMember(nodeId: c.nodeId, joinedAt: now)),
+        ],
+        createdAt: now,
+      );
+    }).toList();
   }
 
   Future<void> _openQrScreen() async {
@@ -554,22 +653,129 @@ class _HomeScreenState extends State<HomeScreen> {
     _showMessage('${contactDisplayName(contact)} 연락처에 추가했습니다.');
   }
 
-  void openGroupPlaceholder(LocalContactGroup group) {
-    _showMessage('${group.name} Group 채팅은 Phase-2에서 연결됩니다.');
-  }
-
-  void _openGroupChat(LocalContactGroup group) {
+  void _openGroupChat(ChatGroup group) {
     if (!_settings.userLevel.canSendMessages) {
       _showMessage('Server mode only relays messages. Group chat is disabled.');
+      return;
+    }
+    if (_settings.demoMode) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _DemoGroupChatScreen(
+            self: _demoSelfSummary(),
+            group: group,
+            allContacts: _demoSavedContacts,
+          ),
+        ),
+      );
       return;
     }
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            GroupChatScreen(groupName: group.name, members: group.members),
+        builder: (_) => GroupChatScreen(group: group, contacts: _contacts),
       ),
+    ).then((_) => _loadChatGroups());
+  }
+
+  Future<void> _inviteToGroupChat(Contact contact) async {
+    if (!mounted) return;
+    final myNodeId = IdentityService().myNodeId;
+
+    // Show a dialog: pick existing group or create new
+    final groups = _settings.demoMode ? _demoChatGroups : _chatGroups;
+    final availableGroups = groups
+        .where((g) => !g.isFull && !g.hasMember(contact.nodeId))
+        .toList();
+
+    String? result;
+    if (!mounted) return;
+    result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        return StatefulBuilder(
+          builder: (ctx, setDs) => AlertDialog(
+            title: const Text('그룹 채팅에 초대'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (availableGroups.isNotEmpty) ...[
+                    const Text(
+                      '기존 그룹 선택',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 4),
+                    ...availableGroups.map(
+                      (g) => ListTile(
+                        dense: true,
+                        title: Text(g.name),
+                        subtitle: Text('${g.memberCount}명'),
+                        onTap: () => Navigator.pop(ctx, 'existing:${g.groupId}'),
+                      ),
+                    ),
+                    const Divider(),
+                  ],
+                  const Text(
+                    '새 그룹 만들기',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(
+                      hintText: '그룹 이름 입력',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => Navigator.pop(ctx, 'new:${controller.text}'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, 'new:${controller.text}'),
+                child: const Text('초대'),
+              ),
+            ],
+          ),
+        );
+      },
     );
+
+    if (result == null || !mounted) return;
+
+    if (result.startsWith('existing:')) {
+      final groupId = result.substring('existing:'.length);
+      final group = (_settings.demoMode ? _demoChatGroups : _chatGroups)
+          .firstWhere((g) => g.groupId == groupId, orElse: () => throw StateError('not found'));
+      if (_settings.demoMode) {
+        _showMessage('${contactDisplayName(contact)}을(를) ${group.name}에 초대했습니다. (Demo)');
+        return;
+      }
+      await _groupService.addMember(groupId, contact.nodeId);
+      await _groupMessaging.sendInvite(group: group, targetNodeId: contact.nodeId);
+      _loadChatGroups();
+    } else if (result.startsWith('new:')) {
+      final name = result.substring('new:'.length).trim();
+      if (name.isEmpty) return;
+      if (_settings.demoMode) {
+        _showMessage('[$name] Demo 그룹에 ${contactDisplayName(contact)}을(를) 초대했습니다.');
+        return;
+      }
+      final group = await _groupService.createGroup(name: name, myNodeId: myNodeId);
+      await _groupMessaging.sendInvite(group: group, targetNodeId: contact.nodeId);
+      _loadChatGroups();
+    }
   }
 
   void _showMessage(String message) {
@@ -757,8 +963,8 @@ class _HomeScreenState extends State<HomeScreen> {
         await _contactService.setTrusted(contact.nodeId, !contact.isTrusted);
       case _ContactAction.toggleFavorite:
         await _contactService.setFavorite(contact.nodeId, !contact.isFavorite);
-      case _ContactAction.setGroup:
-        await _setContactGroup(contact);
+      case _ContactAction.inviteToGroup:
+        await _inviteToGroupChat(contact);
       case _ContactAction.setAvatar:
         await _setContactAvatar(contact);
       case _ContactAction.setLevel:
@@ -801,21 +1007,8 @@ class _HomeScreenState extends State<HomeScreen> {
           (current) =>
               _copyDemoContact(current, isFavorite: !current.isFavorite),
         );
-      case _ContactAction.setGroup:
-        final group = await _askForText(
-          title: contact.groupName == null ? 'Demo group' : 'Demo group',
-          label: 'Group name',
-          initialValue: contact.groupName ?? '',
-          hint: 'Empty clears the demo group.',
-        );
-        if (group == null) return;
-        _replaceDemoContact(
-          contact.nodeId,
-          (current) => _copyDemoContact(
-            current,
-            groupName: group.trim().isEmpty ? null : group.trim(),
-          ),
-        );
+      case _ContactAction.inviteToGroup:
+        await _inviteToGroupChat(contact);
       case _ContactAction.setAvatar:
         var selectedKey = contact.avatarKey ?? AvatarRegistry.defaultKey;
         final nextKey = await showDialog<String>(
@@ -875,8 +1068,8 @@ class _HomeScreenState extends State<HomeScreen> {
         await _contactService.setTrusted(contact.nodeId, true);
       case _ContactAction.toggleFavorite:
         await _contactService.setFavorite(contact.nodeId, !contact.isFavorite);
-      case _ContactAction.setGroup:
-        await _setContactGroup(contact);
+      case _ContactAction.inviteToGroup:
+        _showMessage('자신을 그룹에 초대할 수 없습니다.');
       case _ContactAction.setAvatar:
         await _setSelfAvatar(contact);
       case _ContactAction.setLevel:
@@ -891,7 +1084,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleGroupAction(
-    LocalContactGroup group,
+    ChatGroup group,
     _GroupAction action,
   ) async {
     if (_settings.demoMode) {
@@ -900,20 +1093,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     switch (action) {
       case _GroupAction.rename:
-        await _renameGroup(group);
-      case _GroupAction.toggleFavorite:
-        for (final contact in group.members) {
-          await _contactService.setFavorite(contact.nodeId, !group.isFavorite);
-        }
+        await _renameChatGroup(group);
       case _GroupAction.delete:
-        for (final contact in group.members) {
-          await _contactService.setGroup(contact.nodeId, null);
-        }
+        await _groupService.deleteGroup(group.groupId);
+        _loadChatGroups();
     }
   }
 
   Future<void> _handleDemoGroupAction(
-    LocalContactGroup group,
+    ChatGroup group,
     _GroupAction action,
   ) async {
     switch (action) {
@@ -922,35 +1110,20 @@ class _HomeScreenState extends State<HomeScreen> {
           title: 'Demo group rename',
           label: 'Group name',
           initialValue: group.name,
-          hint: 'Demo mode only. Real contacts are not changed.',
+          hint: 'Demo mode only.',
         );
         if (name == null || name.trim().isEmpty) return;
-        final memberIds = group.members
-            .map((contact) => _nodeHex(contact.nodeId))
-            .toSet();
-        _replaceAllDemoContacts(
-          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
-              ? _copyDemoContact(contact, groupName: name.trim())
-              : contact,
-        );
-      case _GroupAction.toggleFavorite:
-        final memberIds = group.members
-            .map((contact) => _nodeHex(contact.nodeId))
-            .toSet();
-        _replaceAllDemoContacts(
-          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
-              ? _copyDemoContact(contact, isFavorite: !group.isFavorite)
-              : contact,
-        );
+        setState(() {
+          _demoChatGroups = _demoChatGroups
+              .map((g) => g.groupId == group.groupId ? g.copyWith(name: name.trim()) : g)
+              .toList();
+        });
       case _GroupAction.delete:
-        final memberIds = group.members
-            .map((contact) => _nodeHex(contact.nodeId))
-            .toSet();
-        _replaceAllDemoContacts(
-          (contact) => memberIds.contains(_nodeHex(contact.nodeId))
-              ? _copyDemoContact(contact, groupName: null)
-              : contact,
-        );
+        setState(() {
+          _demoChatGroups = _demoChatGroups
+              .where((g) => g.groupId != group.groupId)
+              .toList();
+        });
     }
   }
 
@@ -981,20 +1154,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _saveSelfSettings(_settings.copyWith(displayName: displayName));
   }
 
-  Future<void> _setContactGroup(Contact contact) async {
-    final group = await _askForText(
-      title: contact.groupName == null ? 'Group 추가' : 'Group 변경',
-      label: '로컬 Group 이름',
-      initialValue: contact.groupName ?? '',
-      hint: '비워두면 Group에서 제외됩니다.',
-    );
-    if (group == null) return;
-    final trimmed = group.trim();
-    await _contactService.setGroup(
-      contact.nodeId,
-      trimmed.isEmpty ? null : trimmed,
-    );
-  }
 
   Future<void> _setContactAvatar(Contact contact) async {
     var selectedKey = contact.avatarKey ?? AvatarRegistry.defaultKey;
@@ -1281,17 +1440,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _renameGroup(LocalContactGroup group) async {
+  Future<void> _renameChatGroup(ChatGroup group) async {
     final name = await _askForText(
       title: 'Group 이름 변경',
-      label: '로컬 Group 이름',
+      label: '그룹 이름',
       initialValue: group.name,
-      hint: 'Group에 포함된 연락처에만 로컬로 적용됩니다.',
+      hint: '그룹 이름을 변경합니다.',
     );
     if (name == null || name.trim().isEmpty) return;
-    for (final contact in group.members) {
-      await _contactService.setGroup(contact.nodeId, name);
-    }
+    await _groupService.renameGroup(group.groupId, name.trim());
+    _loadChatGroups();
   }
 
   Future<String?> _askForText({
@@ -1951,8 +2109,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     if (_filter == HomeFilter.groups) {
-      return _GroupList(
-        groups: buildGroups([selfContact, ...savedContacts]),
+      final groups = _settings.demoMode ? _demoChatGroups : _chatGroups;
+      return _ChatGroupList(
+        groups: groups,
         onTap: _openGroupChat,
         onAction: _handleGroupAction,
       );
@@ -1983,10 +2142,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSearch() {
     final savedContacts = [_selfContact(), ..._savedContactsExcludingSelf()];
-    final groups = searchGroups(
-      buildGroups(savedContacts),
-      _searchController.text,
-    );
+    final allGroups = _settings.demoMode ? _demoChatGroups : _chatGroups;
+    final groups = searchChatGroups(allGroups, _searchController.text);
     final contacts = searchContacts(savedContacts, _searchController.text);
     return Column(
       children: [
@@ -2007,7 +2164,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               if (groups.isNotEmpty) const _SectionLabel(label: 'Groups'),
               for (final group in groups)
-                _GroupTile(
+                _ChatGroupTile(
                   group: group,
                   onTap: () => _openGroupChat(group),
                   onAction: (action) => _handleGroupAction(group, action),
@@ -2676,8 +2833,8 @@ class _ContactTile extends StatelessWidget {
         child: Text(contact.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'),
       ),
       const PopupMenuItem(
-        value: _ContactAction.setGroup,
-        child: Text('Group 추가 / 변경'),
+        value: _ContactAction.inviteToGroup,
+        child: Text('그룹 채팅에 초대'),
       ),
       const PopupMenuItem(
         value: _ContactAction.setAvatar,
@@ -4313,7 +4470,7 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
             outgoing: false,
             timestamp: now + 500,
             type: type,
-            fileName: fileName,
+            fileName: null, // Re: prefix is in text; don't show raw filename
             isTimedMsg: _mode == MessageSendMode.timed,
           ),
         );
@@ -4755,12 +4912,12 @@ class _ThinDeviceIconPainter extends CustomPainter {
   }
 }
 
-class _GroupList extends StatelessWidget {
-  final List<LocalContactGroup> groups;
-  final ValueChanged<LocalContactGroup> onTap;
-  final void Function(LocalContactGroup, _GroupAction) onAction;
+class _ChatGroupList extends StatelessWidget {
+  final List<ChatGroup> groups;
+  final ValueChanged<ChatGroup> onTap;
+  final void Function(ChatGroup, _GroupAction) onAction;
 
-  const _GroupList({
+  const _ChatGroupList({
     required this.groups,
     required this.onTap,
     required this.onAction,
@@ -4770,15 +4927,15 @@ class _GroupList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (groups.isEmpty) {
       return const _EmptyState(
-        icon: Icons.folder_copy_outlined,
-        title: '아직 Group이 없습니다.',
-        detail: '연락처의 ... 메뉴에서 Group을 추가하세요.',
+        icon: Icons.groups_outlined,
+        title: '아직 그룹 채팅이 없습니다.',
+        detail: '연락처의 ... 메뉴에서 그룹 채팅에 초대하세요.',
       );
     }
     return ListView(
       children: [
         for (final group in groups)
-          _GroupTile(
+          _ChatGroupTile(
             group: group,
             onTap: () => onTap(group),
             onAction: (action) => onAction(group, action),
@@ -4788,12 +4945,12 @@ class _GroupList extends StatelessWidget {
   }
 }
 
-class _GroupTile extends StatelessWidget {
-  final LocalContactGroup group;
+class _ChatGroupTile extends StatelessWidget {
+  final ChatGroup group;
   final VoidCallback onTap;
   final ValueChanged<_GroupAction> onAction;
 
-  const _GroupTile({
+  const _ChatGroupTile({
     required this.group,
     required this.onTap,
     required this.onAction,
@@ -4802,30 +4959,37 @@ class _GroupTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFF2D2858),
-        child: Icon(Icons.groups_outlined, color: _HomeScreenState._accent),
-      ),
-      title: Row(
+      leading: Stack(
         children: [
-          Expanded(
-            child: Text(
-              group.name,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
-            ),
+          const CircleAvatar(
+            backgroundColor: Color(0xFF2D2858),
+            child: Icon(Icons.groups_outlined, color: _HomeScreenState._accent),
           ),
-          if (group.isFavorite)
-            const Icon(Icons.star, color: Colors.amber, size: 16),
+          if (group.unreadCount > 0)
+            Positioned(
+              right: 0,
+              top: 0,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  group.unreadCount > 9 ? '9+' : '${group.unreadCount}',
+                  style: const TextStyle(color: Colors.white, fontSize: 9),
+                ),
+              ),
+            ),
         ],
       ),
+      title: Text(
+        group.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: Text(
-        () {
-          final lead = group.members.isNotEmpty
-              ? contactDisplayName(group.members.first)
-              : '-';
-          return '${group.memberCount}명 · Lead: $lead';
-        }(),
+        '${group.memberCount}명',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 11),
@@ -4833,20 +4997,261 @@ class _GroupTile extends StatelessWidget {
       trailing: PopupMenuButton<_GroupAction>(
         tooltip: 'Group 메뉴',
         onSelected: onAction,
-        itemBuilder: (context) => [
-          const PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
-          PopupMenuItem(
-            value: _GroupAction.toggleFavorite,
-            child: Text(group.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'),
-          ),
-          const PopupMenuDivider(),
-          const PopupMenuItem(
-            value: _GroupAction.delete,
-            child: Text('Group 삭제'),
-          ),
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
+          PopupMenuDivider(),
+          PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
         ],
       ),
       onTap: onTap,
+    );
+  }
+}
+
+// ── Demo Group Chat Screen ────────────────────────────────────────────────────
+
+class _DemoGroupMsg {
+  final String text;
+  final String senderLabel;
+  final int timestamp;
+  final bool isOutgoing;
+  final String? fileName;
+
+  const _DemoGroupMsg({
+    required this.text,
+    required this.senderLabel,
+    required this.timestamp,
+    required this.isOutgoing,
+    this.fileName,
+  });
+}
+
+class _DemoGroupChatScreen extends StatefulWidget {
+  final TopologyNodeSummary self;
+  final ChatGroup group;
+  final List<Contact> allContacts;
+
+  const _DemoGroupChatScreen({
+    required this.self,
+    required this.group,
+    required this.allContacts,
+  });
+
+  @override
+  State<_DemoGroupChatScreen> createState() => _DemoGroupChatScreenState();
+}
+
+class _DemoGroupChatScreenState extends State<_DemoGroupChatScreen> {
+  static const Color _bgColor = Color(0xFF1A1A2E);
+  static const Color _surfaceColor = Color(0xFF16213E);
+  static const Color _outgoingBubble = Color(0xFF6C5CE7);
+  static const Color _incomingBubble = Color(0xFF2D2D3F);
+
+  final List<_DemoGroupMsg> _messages = [];
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+
+  String get _selfName => widget.self.displayName ?? 'Me';
+
+  String _nameForNodeId(Uint8List nodeId) {
+    final hex = nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    for (final c in widget.allContacts) {
+      final cHex = c.nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      if (cHex == hex) return c.displayName ?? hex.substring(0, 6);
+    }
+    return hex.substring(0, 6);
+  }
+
+  List<GroupMember> get _otherMembers {
+    final selfHex = widget.self.nodeId
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return widget.group.members
+        .where((m) => m.nodeIdHex != selfHex)
+        .toList();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _send({String? text, String? fileName}) {
+    final content = (text ?? '').trim();
+    if (content.isEmpty && fileName == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final displayText = content.isNotEmpty ? content : (fileName ?? '파일');
+    setState(() {
+      _messages.add(_DemoGroupMsg(
+        text: displayText,
+        senderLabel: _selfName,
+        timestamp: now,
+        isOutgoing: true,
+        fileName: fileName,
+      ));
+      for (final member in _otherMembers) {
+        final memberName = _nameForNodeId(member.nodeId);
+        final replyText = '(Re $memberName-$_selfName): $displayText';
+        _messages.add(_DemoGroupMsg(
+          text: replyText,
+          senderLabel: memberName,
+          timestamp: now + 300,
+          isOutgoing: false,
+          fileName: null,
+        ));
+      }
+      _controller.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _sendFile() async {
+    final file = await openFile();
+    if (file == null) return;
+    _send(fileName: file.name);
+  }
+
+  Future<void> _sendImage() async {
+    const imageTypes = XTypeGroup(
+      label: 'images',
+      extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    );
+    final file = await openFile(acceptedTypeGroups: [imageTypes]);
+    if (file == null) return;
+    _send(fileName: file.name);
+  }
+
+  Widget _buildBubble(_DemoGroupMsg msg) {
+    final time = DateTime.fromMillisecondsSinceEpoch(msg.timestamp);
+    final timeStr =
+        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    return Align(
+      alignment: msg.isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        child: Column(
+          crossAxisAlignment: msg.isOutgoing
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            if (!msg.isOutgoing)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 2),
+                child: Text(
+                  msg.senderLabel,
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                ),
+              ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: msg.isOutgoing ? _outgoingBubble : _incomingBubble,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    msg.fileName != null ? '📎 ${msg.fileName}' : msg.text,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    timeStr,
+                    style: const TextStyle(fontSize: 10, color: Colors.white54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bgColor,
+      appBar: AppBar(
+        backgroundColor: _surfaceColor,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.group.name,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              '${widget.group.memberCount}명 · Demo',
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _messages.isEmpty
+                ? const Center(
+                    child: Text(
+                      '그룹 채팅을 시작하세요.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: _messages.length,
+                    itemBuilder: (_, i) => _buildBubble(_messages[i]),
+                  ),
+          ),
+          Container(
+            color: _surfaceColor,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.attach_file, color: Colors.white70),
+                  onPressed: _sendFile,
+                  tooltip: '파일',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.image_outlined, color: Colors.white70),
+                  onPressed: _sendImage,
+                  tooltip: '이미지',
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: '메시지 입력',
+                      hintStyle: TextStyle(color: Colors.white38),
+                      border: InputBorder.none,
+                    ),
+                    onSubmitted: (v) => _send(text: v),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Color(0xFF6C5CE7)),
+                  onPressed: () => _send(text: _controller.text),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

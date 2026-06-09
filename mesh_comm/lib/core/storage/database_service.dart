@@ -19,7 +19,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   static const String _dbFileName = 'mesh_comm.db';
-  static const int _dbVersion = 9;
+  static const int _dbVersion = 10;
 
   Database? _db;
 
@@ -120,6 +120,43 @@ class DatabaseService {
     );
 
     await db.execute('''
+      CREATE TABLE chat_groups (
+        group_id   TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        leader_id  BLOB NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE group_members (
+        group_id   TEXT NOT NULL,
+        node_id    BLOB NOT NULL,
+        joined_at  INTEGER NOT NULL,
+        msg_count  INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (group_id, node_id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE group_messages (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        msg_id      BLOB NOT NULL UNIQUE,
+        group_id    TEXT NOT NULL,
+        sender_id   BLOB NOT NULL,
+        msg_type    INTEGER NOT NULL,
+        payload     TEXT,
+        timestamp   INTEGER NOT NULL,
+        is_read     INTEGER NOT NULL DEFAULT 0,
+        is_outgoing INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX idx_group_messages_group ON group_messages (group_id, timestamp)',
+    );
+
+    await db.execute('''
       CREATE TABLE notices (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_name TEXT    NOT NULL,
@@ -194,6 +231,44 @@ class DatabaseService {
           is_long     INTEGER NOT NULL DEFAULT 0
         )
       ''');
+    }
+    if (oldVersion < 10) {
+      // 기존 로컬 그룹 태그 초기화 (새 ChatGroup 시스템으로 교체)
+      await db.execute("UPDATE contacts SET group_name = NULL");
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS chat_groups (
+          group_id   TEXT PRIMARY KEY,
+          name       TEXT NOT NULL,
+          leader_id  BLOB NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS group_members (
+          group_id   TEXT NOT NULL,
+          node_id    BLOB NOT NULL,
+          joined_at  INTEGER NOT NULL,
+          msg_count  INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (group_id, node_id)
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS group_messages (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          msg_id      BLOB NOT NULL UNIQUE,
+          group_id    TEXT NOT NULL,
+          sender_id   BLOB NOT NULL,
+          msg_type    INTEGER NOT NULL,
+          payload     TEXT,
+          timestamp   INTEGER NOT NULL,
+          is_read     INTEGER NOT NULL DEFAULT 0,
+          is_outgoing INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages (group_id, timestamp)',
+      );
     }
   }
 
@@ -733,6 +808,156 @@ class DatabaseService {
 
   String _hex(Uint8List bytes) =>
       bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+  // ── ChatGroup ─────────────────────────────────────────────────────────────
+
+  Future<void> upsertChatGroup({
+    required String groupId,
+    required String name,
+    required Uint8List leaderId,
+    required int createdAt,
+  }) async {
+    await _database.insert('chat_groups', {
+      'group_id': groupId,
+      'name': name,
+      'leader_id': leaderId,
+      'created_at': createdAt,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<Map<String, dynamic>?> getChatGroup(String groupId) async {
+    final rows = await _database.query(
+      'chat_groups',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+    );
+    if (rows.isEmpty) return null;
+    return Map.of(rows.first);
+  }
+
+  Future<List<Map<String, dynamic>>> getAllChatGroups() async {
+    return _database.query('chat_groups', orderBy: 'created_at ASC');
+  }
+
+  Future<void> deleteChatGroup(String groupId) async {
+    await _database.delete('chat_groups', where: 'group_id = ?', whereArgs: [groupId]);
+    await _database.delete('group_members', where: 'group_id = ?', whereArgs: [groupId]);
+    await _database.delete('group_messages', where: 'group_id = ?', whereArgs: [groupId]);
+  }
+
+  Future<void> updateChatGroupName(String groupId, String name) async {
+    await _database.update('chat_groups', {'name': name},
+        where: 'group_id = ?', whereArgs: [groupId]);
+  }
+
+  Future<void> updateChatGroupLeader(String groupId, Uint8List leaderId) async {
+    await _database.update('chat_groups', {'leader_id': leaderId},
+        where: 'group_id = ?', whereArgs: [groupId]);
+  }
+
+  // ── GroupMember ──────────────────────────────────────────────────────────
+
+  Future<void> upsertGroupMember({
+    required String groupId,
+    required Uint8List nodeId,
+    required int joinedAt,
+  }) async {
+    final existing = await _database.query(
+      'group_members',
+      where: 'group_id = ? AND node_id = ?',
+      whereArgs: [groupId, nodeId],
+    );
+    if (existing.isEmpty) {
+      await _database.insert('group_members', {
+        'group_id': groupId,
+        'node_id': nodeId,
+        'joined_at': joinedAt,
+        'msg_count': 0,
+      });
+    }
+  }
+
+  Future<void> removeGroupMember(String groupId, Uint8List nodeId) async {
+    await _database.delete(
+      'group_members',
+      where: 'group_id = ? AND node_id = ?',
+      whereArgs: [groupId, nodeId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getGroupMembers(String groupId) async {
+    final rows = await _database.query(
+      'group_members',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+      orderBy: 'msg_count DESC, joined_at ASC',
+    );
+    return rows.map(Map.of).toList();
+  }
+
+  Future<void> incrementGroupMemberMsgCount(String groupId, Uint8List nodeId) async {
+    await _database.rawUpdate(
+      'UPDATE group_members SET msg_count = msg_count + 1 WHERE group_id = ? AND node_id = ?',
+      [groupId, nodeId],
+    );
+  }
+
+  // ── GroupMessage ─────────────────────────────────────────────────────────
+
+  Future<void> saveGroupMessage({
+    required Uint8List msgId,
+    required String groupId,
+    required Uint8List senderId,
+    required int msgType,
+    required String payload,
+    required int timestamp,
+    bool isOutgoing = false,
+  }) async {
+    await _database.insert('group_messages', {
+      'msg_id': msgId,
+      'group_id': groupId,
+      'sender_id': senderId,
+      'msg_type': msgType,
+      'payload': payload,
+      'timestamp': timestamp,
+      'is_read': 0,
+      'is_outgoing': isOutgoing ? 1 : 0,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  Future<List<Map<String, dynamic>>> getGroupMessages(
+    String groupId, {
+    int limit = 100,
+  }) async {
+    final rows = await _database.rawQuery(
+      '''
+      SELECT * FROM group_messages
+      WHERE group_id = ?
+      ORDER BY timestamp ASC
+      LIMIT ?
+      ''',
+      [groupId, limit],
+    );
+    return rows.map(Map.of).toList();
+  }
+
+  Future<int> getGroupUnreadCount(String groupId) async {
+    final rows = await _database.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM group_messages WHERE group_id = ? AND is_read = 0 AND is_outgoing = 0',
+      [groupId],
+    );
+    if (rows.isEmpty) return 0;
+    return (rows.first['cnt'] as int?) ?? 0;
+  }
+
+  Future<void> markGroupMessagesRead(String groupId) async {
+    await _database.update(
+      'group_messages',
+      {'is_read': 1},
+      where: 'group_id = ? AND is_outgoing = 0',
+      whereArgs: [groupId],
+    );
+  }
 
   // ── 리소스 해제 (테스트 또는 앱 종료 시) ──────────────────────────────────
 

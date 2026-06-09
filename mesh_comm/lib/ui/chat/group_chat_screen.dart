@@ -1,10 +1,13 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
+import 'package:mesh_comm/features/groups/chat_group_model.dart';
+import 'package:mesh_comm/features/groups/group_messaging_service.dart';
+import 'package:mesh_comm/features/groups/group_service.dart';
+import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
@@ -12,35 +15,17 @@ import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
 
 class GroupChatScreen extends StatefulWidget {
-  final String groupName;
-  final List<Contact> members;
+  final ChatGroup group;
+  final List<Contact> contacts;
 
   const GroupChatScreen({
     super.key,
-    required this.groupName,
-    required this.members,
+    required this.group,
+    required this.contacts,
   });
 
   @override
   State<GroupChatScreen> createState() => _GroupChatScreenState();
-}
-
-class _GroupChatMessage {
-  final String text;
-  final String senderLabel;
-  final int timestamp;
-  final bool isOutgoing;
-  final String? status;
-  final bool isFile;
-
-  const _GroupChatMessage({
-    required this.text,
-    required this.senderLabel,
-    required this.timestamp,
-    required this.isOutgoing,
-    this.status,
-    this.isFile = false,
-  });
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen> {
@@ -48,11 +33,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   static const Color _surfaceColor = Color(0xFF16213E);
   static const Color _outgoingBubble = Color(0xFF6C5CE7);
   static const Color _incomingBubble = Color(0xFF2D2D3F);
-  static const Color _inputBarBg = Color(0xFF16213E);
   static const Color _textPrimary = Color(0xFFECECEC);
   static const Color _textSecondary = Color(0xFF9090A0);
 
-  // 드롭다운: chat_screen.dart와 동일 구조
   static const _dropdownItems = [
     ('일반', 'normal'),
     ('타임', 'timed'),
@@ -60,22 +43,79 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     ('이미지', 'image'),
   ];
 
-  final _messages = <_GroupChatMessage>[];
+  final _groupService = GroupService();
+  final _groupMessaging = GroupMessagingService();
+
+  late ChatGroup _group;
+  List<GroupMessage> _messages = [];
   final _controller = TextEditingController();
   final _keyboardFocusNode = FocusNode();
   final _scrollController = ScrollController();
-  StreamSubscription<ReceivedMessage>? _subscription;
+  StreamSubscription<GroupMessage>? _msgSubscription;
+  StreamSubscription<ChatGroup>? _updateSubscription;
   MessageSendMode _messageMode = MessageSendMode.normal;
   bool _isSending = false;
 
-  int get _maxLength => _messageMode.maxLength;
+  @override
+  void initState() {
+    super.initState();
+    _group = widget.group;
+    _loadMessages();
+    _msgSubscription = _groupMessaging.messageStream
+        .where((m) => m.groupId == _group.groupId)
+        .listen(_onIncomingMessage);
+    _updateSubscription = _groupMessaging.updateStream
+        .where((g) => g.groupId == _group.groupId)
+        .listen((updated) {
+      if (mounted) setState(() => _group = updated);
+    });
+  }
+
+  @override
+  void dispose() {
+    _msgSubscription?.cancel();
+    _updateSubscription?.cancel();
+    _controller.dispose();
+    _keyboardFocusNode.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMessages() async {
+    await _groupService.markMessagesRead(_group.groupId);
+    final msgs = await _groupService.getMessages(_group.groupId);
+    if (!mounted) return;
+    setState(() => _messages = msgs);
+    _scrollToBottom();
+  }
+
+  void _onIncomingMessage(GroupMessage msg) {
+    if (!mounted) return;
+    setState(() => _messages.add(msg));
+    _groupService.markMessagesRead(_group.groupId);
+    _scrollToBottom();
+  }
+
+  String _senderName(Uint8List senderId) {
+    final hex = _hex(senderId);
+    for (final c in widget.contacts) {
+      if (contactCode(c) == hex) return contactDisplayName(c);
+    }
+    return hex.substring(0, 8);
+  }
+
+  bool _isMe(Uint8List senderId) {
+    return _bytesEqual(senderId, IdentityService().myNodeId);
+  }
+
+  bool get _isLeader =>
+      _group.isLeader(IdentityService().myNodeId);
 
   String get _dropdownValue => switch (_messageMode) {
-    MessageSendMode.normal => 'normal',
-    MessageSendMode.timed => 'timed',
-    MessageSendMode.shortNotice => 'normal',
-    MessageSendMode.longNotice => 'normal',
-  };
+        MessageSendMode.normal => 'normal',
+        MessageSendMode.timed => 'timed',
+        _ => 'normal',
+      };
 
   void _onDropdownChanged(String? value) {
     if (value == null || _isSending) return;
@@ -91,34 +131,48 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  Future<void> _sendText() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _isSending) return;
+    setState(() => _isSending = true);
+    final sent = await _groupMessaging.sendGroupMessage(
+      group: _group,
+      text: text,
+      connectedChecker: MessagingService().isDirectlyConnected,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isSending = false;
+      if (sent >= 0) _controller.clear();
+    });
+    if (sent > 0) _scrollToBottom();
+    await _loadMessages();
+  }
+
   Future<void> _pickAndSendFile() async {
-    const typeGroup = XTypeGroup(label: 'files');
-    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+    final file = await openFile();
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    for (final member in widget.members) {
-      final hex = contactCode(member);
-      if (MessagingService().isDirectlyConnected(hex)) {
-        await MessagingService().sendFile(
-          data: data,
-          fileName: file.name,
-          mimeType: 'application/octet-stream',
-          targetNodeIdHex: hex,
-          kind: TransferKind.file,
-        );
-      }
+    for (final member in _group.members) {
+      if (_isMe(member.nodeId)) continue;
+      if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
+      await MessagingService().sendFile(
+        data: data,
+        fileName: file.name,
+        mimeType: 'application/octet-stream',
+        targetNodeIdHex: member.nodeIdHex,
+        kind: TransferKind.file,
+      );
     }
+    await _groupMessaging.sendGroupMessage(
+      group: _group,
+      text: file.name,
+      connectedChecker: MessagingService().isDirectlyConnected,
+      filePrefix: '__FILE__',
+    );
     if (mounted) {
-      setState(() {
-        _messages.add(_GroupChatMessage(
-          text: file.name,
-          senderLabel: 'Me',
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          isOutgoing: true,
-          isFile: true,
-        ));
-      });
       _scrollToBottom();
+      await _loadMessages();
     }
   }
 
@@ -130,108 +184,145 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile(acceptedTypeGroups: [imageTypes]);
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    for (final member in widget.members) {
-      final hex = contactCode(member);
-      if (MessagingService().isDirectlyConnected(hex)) {
-        await MessagingService().sendFile(
-          data: data,
-          fileName: file.name,
-          mimeType: 'image/jpeg',
-          targetNodeIdHex: hex,
-          kind: TransferKind.image,
-        );
-      }
+    for (final member in _group.members) {
+      if (_isMe(member.nodeId)) continue;
+      if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
+      await MessagingService().sendFile(
+        data: data,
+        fileName: file.name,
+        mimeType: 'image/jpeg',
+        targetNodeIdHex: member.nodeIdHex,
+        kind: TransferKind.image,
+      );
     }
-    if (mounted) {
-      setState(() {
-        _messages.add(_GroupChatMessage(
-          text: file.name,
-          senderLabel: 'Me',
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          isOutgoing: true,
-          isFile: true,
-        ));
-      });
-      _scrollToBottom();
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _subscribeToGroupMessages();
-  }
-
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    _controller.dispose();
-    _keyboardFocusNode.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _subscribeToGroupMessages() {
-    final memberIds = widget.members.map(contactCode).toSet();
-    _subscription = MessagingService().messageStream
-        .where((message) => memberIds.contains(_nodeHex(message.senderNodeId)))
-        .listen((message) {
-          if (!mounted) return;
-          final sender = widget.members.firstWhere(
-            (contact) => contactCode(contact) == _nodeHex(message.senderNodeId),
-            orElse: () => widget.members.first,
-          );
-          MessagingService().markMessageDisplayed(message);
-          setState(() {
-            _messages.add(
-              _GroupChatMessage(
-                text: message.text,
-                senderLabel: contactDisplayName(sender),
-                timestamp: message.timestamp,
-                isOutgoing: false,
-              ),
-            );
-          });
-          _scrollToBottom();
-        });
-  }
-
-  Future<void> _sendMessage() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _isSending) return;
-
-    setState(() => _isSending = true);
-    final result = await MessagingService().sendGroupTextMessage(
-      recipients: widget.members,
-      text: text,
-      mode: _messageMode,
+    await _groupMessaging.sendGroupMessage(
+      group: _group,
+      text: file.name,
+      connectedChecker: MessagingService().isDirectlyConnected,
+      filePrefix: '__IMAGE__',
     );
-
-    if (!mounted) return;
-    setState(() {
-      _isSending = false;
-      if (result.sentAny) {
-        final sentMode = _messageMode;
-        _controller.clear();
-        _messages.add(
-          _GroupChatMessage(
-            text: text,
-            senderLabel: 'Me',
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            isOutgoing: true,
-            status: '${result.sent}/${result.attempted} 전송',
-          ),
-        );
-      }
-    });
-
-    if (result.sentAny) {
+    if (mounted) {
       _scrollToBottom();
+      await _loadMessages();
+    }
+  }
+
+  Future<void> _inviteMember() async {
+    final unconnected = widget.contacts.where((c) {
+      if (_bytesEqual(c.nodeId, IdentityService().myNodeId)) return false;
+      if (_group.hasMember(c.nodeId)) return false;
+      return true;
+    }).toList();
+
+    if (unconnected.isEmpty) {
+      _showMessage('초대 가능한 연락처가 없습니다.');
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.blockedReason ?? 'Group send failed.')),
+    if (_group.isFull) {
+      _showMessage('그룹이 가득 찼습니다. (최대 10명)');
+      return;
+    }
+
+    final contact = await showDialog<Contact>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('멤버 초대'),
+        content: SizedBox(
+          width: 300,
+          child: ListView(
+            shrinkWrap: true,
+            children: unconnected
+                .map((c) => ListTile(
+                      title: Text(contactDisplayName(c)),
+                      onTap: () => Navigator.pop(ctx, c),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+        ],
+      ),
     );
+
+    if (contact == null || !mounted) return;
+    await _groupService.addMember(_group.groupId, contact.nodeId);
+    await _groupMessaging.sendInvite(group: _group, targetNodeId: contact.nodeId);
+    final updated = await _groupService.getGroup(_group.groupId);
+    if (updated != null && mounted) setState(() => _group = updated);
+  }
+
+  Future<void> _kickMember() async {
+    final others = _group.members.where((m) => !_isMe(m.nodeId)).toList();
+    if (others.isEmpty) return;
+
+    final target = await showDialog<GroupMember>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('멤버 추방'),
+        content: SizedBox(
+          width: 300,
+          child: ListView(
+            shrinkWrap: true,
+            children: others
+                .map((m) => ListTile(
+                      title: Text(_senderName(m.nodeId)),
+                      onTap: () => Navigator.pop(ctx, m),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+        ],
+      ),
+    );
+    if (target == null || !mounted) return;
+
+    await _groupService.removeMember(_group.groupId, target.nodeId);
+    await _groupMessaging.broadcastMemberUpdate(
+      group: _group,
+      action: 'remove',
+      targetNodeId: target.nodeId,
+      connectedChecker: MessagingService().isDirectlyConnected,
+    );
+    final updated = await _groupService.getGroup(_group.groupId);
+    if (updated != null && mounted) setState(() => _group = updated);
+  }
+
+  Future<void> _leaveGroup() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('그룹 나가기'),
+        content: Text('${_group.name}에서 나가시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('나가기'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final myNodeId = IdentityService().myNodeId;
+    Uint8List? newLeaderId;
+    if (_isLeader) {
+      newLeaderId = await _groupService.getNextLeader(_group.groupId, myNodeId);
+      if (newLeaderId != null) {
+        await _groupService.setLeader(_group.groupId, newLeaderId);
+      }
+    }
+    await _groupMessaging.broadcastLeave(
+      group: _group,
+      connectedChecker: MessagingService().isDirectlyConnected,
+      newLeaderId: newLeaderId,
+    );
+    await _groupService.removeMember(_group.groupId, myNodeId);
+    if (mounted) Navigator.pop(context);
   }
 
   void _scrollToBottom() {
@@ -245,22 +336,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
   }
 
+  void _showMessage(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final myLevel = AppSettingsService().current.userLevel;
-    if (!myLevel.canSendMessages) {
-      return Scaffold(
-        backgroundColor: _bgColor,
-        appBar: _buildAppBar(),
-        body: const Center(
-          child: Text(
-            'Server mode only relays messages.',
-            style: TextStyle(color: _textSecondary),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: _buildAppBar(),
@@ -292,7 +376,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  widget.groupName,
+                  _group.name,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 16,
@@ -301,7 +385,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   ),
                 ),
                 Text(
-                  'Group · ${widget.members.length}명',
+                  '${_group.memberCount}명',
                   style: const TextStyle(fontSize: 11, color: _textSecondary),
                 ),
               ],
@@ -309,6 +393,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ),
         ],
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.person_add_outlined),
+          onPressed: _inviteMember,
+          tooltip: '멤버 초대',
+        ),
+        if (_isLeader)
+          IconButton(
+            icon: const Icon(Icons.person_remove_outlined, color: Colors.orangeAccent),
+            onPressed: _kickMember,
+            tooltip: '멤버 추방',
+          ),
+        IconButton(
+          icon: const Icon(Icons.exit_to_app, color: Colors.redAccent),
+          onPressed: _leaveGroup,
+          tooltip: '그룹 나가기',
+        ),
+      ],
     );
   }
 
@@ -316,7 +418,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (_messages.isEmpty) {
       return const Center(
         child: Text(
-          '아직 Group 메시지가 없습니다.',
+          '아직 메시지가 없습니다.',
           style: TextStyle(color: _textSecondary, fontSize: 14),
         ),
       );
@@ -329,79 +431,95 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  Widget _buildMessageItem(_GroupChatMessage message) {
-    final isOutgoing = message.isOutgoing;
+  Widget _buildMessageItem(GroupMessage msg) {
+    final isOut = msg.isOutgoing || _isMe(msg.senderId);
+    final label = isOut ? 'Me' : _senderName(msg.senderId);
+    final isFile = msg.isFile;
+    final isImage = msg.isImage;
+    final displayText = isFile
+        ? msg.text.replaceFirst('__FILE__', '')
+        : isImage
+            ? msg.text.replaceFirst('__IMAGE__', '')
+            : msg.text;
 
-    Widget innerContent;
-    if (message.isFile) {
-      innerContent = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.insert_drive_file_outlined, size: 18, color: _textPrimary),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              message.text,
-              style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
-            ),
-          ),
-        ],
-      );
-    } else {
-      innerContent = Text(
-        message.text,
-        style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
-      );
-    }
+    final time = DateTime.fromMillisecondsSinceEpoch(msg.timestamp);
+    final timeStr =
+        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+    final icon = isImage
+        ? Icons.image_outlined
+        : isFile
+            ? Icons.insert_drive_file_outlined
+            : null;
+
+    Widget content = icon != null
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: _textPrimary),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  displayText,
+                  style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+                ),
+              ),
+            ],
+          )
+        : Text(
+            displayText,
+            style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+          );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Column(
-        crossAxisAlignment: isOutgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isOut ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, right: 4, bottom: 2),
-            child: Text(
-              message.senderLabel,
-              style: const TextStyle(color: _textSecondary, fontSize: 11),
+          if (!isOut)
+            Padding(
+              padding: const EdgeInsets.only(left: 6, bottom: 2),
+              child: Text(
+                label,
+                style: const TextStyle(color: _textSecondary, fontSize: 11),
+              ),
             ),
-          ),
           Row(
-            mainAxisAlignment: isOutgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (!isOutgoing) const SizedBox(width: 4),
               Flexible(
                 child: Container(
-                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width * 0.72,
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: isOutgoing ? _outgoingBubble : _incomingBubble,
+                    color: isOut ? _outgoingBubble : _incomingBubble,
                     borderRadius: BorderRadius.only(
                       topLeft: const Radius.circular(18),
                       topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(isOutgoing ? 18 : 4),
-                      bottomRight: Radius.circular(isOutgoing ? 4 : 18),
+                      bottomLeft: Radius.circular(isOut ? 18 : 4),
+                      bottomRight: Radius.circular(isOut ? 4 : 18),
                     ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      innerContent,
+                      content,
                       const SizedBox(height: 4),
                       Text(
-                        [
-                          _formatTime(message.timestamp),
-                          if (message.status != null) message.status!,
-                        ].join(' · '),
-                        style: TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153)),
+                        timeStr,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _textPrimary.withAlpha(153),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
-              if (isOutgoing) const SizedBox(width: 4),
             ],
           ),
         ],
@@ -410,10 +528,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildInputBar() {
+    final canSend = AppSettingsService().current.userLevel.canSendMessages;
+    if (!canSend) {
+      return Container(
+        color: _surfaceColor,
+        padding: const EdgeInsets.all(12),
+        child: const Text(
+          'Server mode: 메시지 전송 불가',
+          style: TextStyle(color: _textSecondary),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: const BoxDecoration(
-        color: _inputBarBg,
+        color: _surfaceColor,
         border: Border(top: BorderSide(color: Color(0xFF2A2A3E), width: 1)),
       ),
       child: SafeArea(
@@ -442,7 +572,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               item.$1,
                               textAlign: TextAlign.center,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: _textPrimary, fontSize: 12),
+                              style: const TextStyle(
+                                color: _textPrimary,
+                                fontSize: 12,
+                              ),
                             ),
                           ))
                       .toList(),
@@ -467,16 +600,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   focusNode: _keyboardFocusNode,
                   onKeyEvent: (event) {
                     if (event is! KeyDownEvent) return;
-                    final isEnter =
-                        event.logicalKey == LogicalKeyboardKey.enter;
-                    final isCtrl = HardwareKeyboard.instance.isControlPressed;
-                    if (isEnter && isCtrl) {
-                      _sendMessage();
+                    if (event.logicalKey == LogicalKeyboardKey.enter &&
+                        HardwareKeyboard.instance.isControlPressed) {
+                      _sendText();
                     }
                   },
                   child: TextField(
                     controller: _controller,
-                    maxLength: _maxLength,
+                    maxLength: _messageMode.maxLength,
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
                     textInputAction: TextInputAction.newline,
@@ -510,25 +641,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               valueListenable: _controller,
               builder: (context, value, _) {
                 final hasText = value.text.trim().isNotEmpty;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  child: IconButton(
-                    onPressed: hasText && !_isSending ? _sendMessage : null,
-                    style: IconButton.styleFrom(
-                      backgroundColor: hasText ? _outgoingBubble : const Color(0xFF2A2A3E),
-                      foregroundColor: _textPrimary,
-                      padding: const EdgeInsets.all(12),
-                      minimumSize: const Size(44, 44),
-                    ),
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: _textPrimary),
-                          )
-                        : const Icon(Icons.send_rounded, size: 20),
-                    tooltip: '전송',
+                return IconButton(
+                  onPressed: hasText && !_isSending ? _sendText : null,
+                  style: IconButton.styleFrom(
+                    backgroundColor:
+                        hasText ? _outgoingBubble : const Color(0xFF2A2A3E),
+                    foregroundColor: _textPrimary,
+                    padding: const EdgeInsets.all(12),
+                    minimumSize: const Size(44, 44),
                   ),
+                  icon: _isSending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _textPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, size: 20),
+                  tooltip: '전송',
                 );
               },
             ),
@@ -537,14 +669,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
     );
   }
-
-  String _formatTime(int timestampMs) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(timestampMs);
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m';
-  }
-
-  String _nodeHex(List<int> bytes) =>
-      bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 }
+
+bool _bytesEqual(Uint8List a, Uint8List b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+String _hex(Uint8List bytes) =>
+    bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
