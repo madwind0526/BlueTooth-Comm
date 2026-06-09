@@ -56,6 +56,9 @@ class LanService {
   // 소켓별 수신 버퍼 (부분 수신 처리)
   final Map<String, _ReceiveBuffer> _buffers = {};
 
+  // 마지막으로 알려진 피어 주소 캐시 (끊김 후 즉시 재연결용)
+  final Map<String, LanPeer> _peerAddressCache = {};
+
   RawDatagramSocket? _udpSocket;
   ServerSocket? _tcpServer;
   Timer? _beaconTimer;
@@ -63,6 +66,7 @@ class LanService {
   // 연결된 피어 nodeIdHex 목록 스트림
   final StreamController<List<String>> _peersController =
       StreamController<List<String>>.broadcast();
+  Set<String> _lastEmittedPeerIds = {};
 
   Stream<List<String>> get connectedPeersStream => _peersController.stream;
 
@@ -107,6 +111,7 @@ class LanService {
     _peers.clear();
     _buffers.clear();
     _connecting.clear();
+    _peerAddressCache.clear();
     _notifyChange();
   }
 
@@ -169,6 +174,7 @@ class LanService {
     if (_peers.containsKey(peer.nodeIdHex)) return;
     if (_connecting.contains(peer.nodeIdHex)) return;
     _connecting.add(peer.nodeIdHex);
+    _peerAddressCache[peer.nodeIdHex] = peer; // 주소 캐시 업데이트
     try {
       final socket = await Socket.connect(
         peer.address,
@@ -252,6 +258,15 @@ class LanService {
     _peers.remove(nodeIdHex);
     _buffers.remove(nodeIdHex);
     _notifyChange();
+    // 캐시에 주소가 있으면 잠시 후 자동 재연결 시도
+    final cached = _peerAddressCache[nodeIdHex];
+    if (cached != null) {
+      Future<void>.delayed(LanConstants.reconnectDelay, () {
+        if (!_peers.containsKey(nodeIdHex) && !_connecting.contains(nodeIdHex)) {
+          _connectToPeer(cached);
+        }
+      });
+    }
   }
 
   // ── UDP 비콘 ─────────────────────────────────────────────────────────────────
@@ -355,6 +370,10 @@ class LanService {
   }
 
   void _notifyChange() {
+    final current = _peers.keys.toSet();
+    if (current.length == _lastEmittedPeerIds.length &&
+        current.containsAll(_lastEmittedPeerIds)) return;
+    _lastEmittedPeerIds = current;
     if (!_peersController.isClosed) {
       _peersController.add(List.unmodifiable(_peers.keys));
     }

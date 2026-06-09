@@ -76,21 +76,49 @@ class TransferService {
     return result;
   }
 
+  /// 현재 파일을 보내고 있는 상대방 nodeIdHex 집합.
+  Set<String> get incomingContactIds =>
+      _incoming.values.map((t) => t.senderNodeIdHex).toSet();
+
   void init({required SendPacketFn sendPacket}) {
     _sendPacket = sendPacket;
   }
 
-  /// 진행 중인 발신/수신 전송을 취소한다.
-  void cancelTransfer(TransferId tid) {
+  /// 진행 중인 발신/수신 전송을 취소한다. [notify] 가 true면 상대방에게 fileCancel 패킷을 보낸다.
+  void cancelTransfer(TransferId tid, {bool notify = true}) {
     _cancelAckTimer(tid);
     if (_outgoing.containsKey(tid)) {
-      _outgoing.remove(tid);
+      final transfer = _outgoing.remove(tid)!;
+      if (notify) _sendCancelPacket(tid, transfer.targetNodeIdHex);
       _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.outgoing));
     } else if (_incoming.containsKey(tid)) {
-      _incoming.remove(tid);
+      final transfer = _incoming.remove(tid)!;
+      if (notify) _sendCancelPacket(tid, transfer.senderNodeIdHex);
       _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.incoming));
     }
-    _log('cancelTransfer: $tid');
+    _log('cancelTransfer: $tid notify=$notify');
+  }
+
+  /// 상대방에게 취소 패킷 전송 (fire-and-forget).
+  void _sendCancelPacket(TransferId tid, String targetNodeIdHex) {
+    _buildPacket(
+      msgType: MsgType.fileCancel,
+      targetNodeIdHex: targetNodeIdHex,
+      payload: Uint8List.fromList(utf8.encode(tid)),
+    ).then((packet) => _sendPacket?.call(packet, targetNodeIdHex)).catchError(
+      (e) => _log('_sendCancelPacket error: $e'),
+    );
+  }
+
+  /// 상대방이 보낸 fileCancel 패킷을 처리한다.
+  void handleFileCancel(MeshPacket packet) {
+    try {
+      final tid = utf8.decode(packet.payload);
+      _log('handleFileCancel: tid=${tid.substring(0, tid.length.clamp(0, 8))}');
+      cancelTransfer(tid, notify: false);
+    } catch (e) {
+      _log('handleFileCancel error: $e');
+    }
   }
 
   /// 모든 진행 중인 전송을 취소하고 상태를 초기화한다.
@@ -163,7 +191,7 @@ class TransferService {
       chunkSize: chunkSize,
     );
     _outgoing[tid] = transfer;
-    _emit(TransferStarted(tid, meta: meta, direction: TransferDirection.outgoing));
+    _emit(TransferStarted(tid, meta: meta, direction: TransferDirection.outgoing, contactNodeIdHex: targetNodeIdHex));
 
     await _sendHeader(transfer);
     return tid;
@@ -221,7 +249,7 @@ class TransferService {
       _log('[DIAG-RX] fileHeader: tid=${meta.tid} file=${meta.fileName} chunks=${meta.totalChunks}');
       final transfer = IncomingTransfer(meta: meta, senderNodeIdHex: senderNodeIdHex);
       _incoming[meta.tid] = transfer;
-      _emit(TransferStarted(meta.tid, meta: meta, direction: TransferDirection.incoming));
+      _emit(TransferStarted(meta.tid, meta: meta, direction: TransferDirection.incoming, contactNodeIdHex: senderNodeIdHex));
       _log('[DIAG-RX] ACK(-1) 발송 시작');
       _sendAck(meta.tid, senderNodeIdHex, chunk: -1);
     } catch (e) {

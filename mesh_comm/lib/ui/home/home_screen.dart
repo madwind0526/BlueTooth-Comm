@@ -92,8 +92,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _accent = Color(0xFF7C6AF7);
-  static const _bluetooth = Color(0xFF8B7CF6);
+  static const _accent = Color(0xFFFF9800);
+  static const _bluetooth = Color(0xFFFF9800);
+
+  // 선택된 탭/아이콘 색상: dark=오렌지, light=딥오렌지
+  static Color selectedColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? Colors.orange
+          : Colors.deepOrange;
+
+  // 상단 transport 버튼 ON 색상: dark=흰색, light=검정
+  static Color transportOnColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? Colors.white
+          : Colors.grey.shade800;
+
+  // 상단 transport 버튼 OFF 색상
+  static Color transportOffColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? Colors.grey.shade500
+          : Colors.grey.shade400;
+
   static const _alertChannel = MethodChannel('mesh_comm/alerts');
 
   final _contactService = ContactService();
@@ -107,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<List<Contact>>? _contactsSubscription;
   StreamSubscription<AppSettings>? _settingsSubscription;
   StreamSubscription<ReceivedMessage>? _messageSubscription;
+  final List<_NoticeEntry> _notices = [];
   StreamSubscription<TopologyResponse>? _topologySubscription;
   StreamSubscription<List<String>>? _lanPeersSubscription;
   StreamSubscription<TransferEvent>? _transferSubscription;
@@ -114,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Contact> _contacts = [];
   Set<String> _chatContactCodes = {};
   Map<String, int> _unreadCounts = {};
+  Set<String> _incomingContactIds = {};
   String? _activeTopologyRequestId;
   final Map<String, TopologyResponse> _topologyResponses = {};
   List<Contact> _demoContacts = const [];
@@ -144,22 +165,56 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadSettings();
     _loadContacts();
+    _loadNotices();
     _contactsSubscription = _contactService.contactsStream.listen((contacts) {
       if (mounted) setState(() => _contacts = sortContacts(contacts));
     });
-    _messageSubscription = MessagingService().messageStream.listen((_) {
+    _messageSubscription = MessagingService().messageStream.listen((msg) {
       _playIncomingMessageAlert();
+      if (msg.isNotice && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📢 공지: ${msg.text}'),
+            duration: const Duration(seconds: 10),
+            backgroundColor: const Color(0xFFFF9800).withValues(alpha: 0.95),
+          ),
+        );
+        final senderHex = msg.senderNodeId
+            .map((b) => b.toRadixString(16).padLeft(2, '0'))
+            .join();
+        final sender = _contacts.cast<Contact?>().firstWhere(
+          (c) => contactCode(c!) == senderHex,
+          orElse: () => null,
+        );
+        final senderName = sender != null
+            ? contactDisplayName(sender)
+            : senderHex.substring(0, 8);
+        final entry = _NoticeEntry(
+          senderName: senderName,
+          text: msg.text,
+          timestamp: msg.timestamp,
+          isLong: false,
+        );
+        setState(() => _notices.add(entry));
+        DatabaseService().saveNotice(
+          senderName: entry.senderName,
+          text: entry.text,
+          timestamp: entry.timestamp,
+          isLong: entry.isLong,
+        );
+      }
       _loadChatContactCodes();
       _loadUnreadCounts();
     });
     _transferSubscription = TransferService().transferStream.listen((event) {
-      if (event is TransferCompleted && event.direction == TransferDirection.incoming) {
-        if (!mounted) return;
-        setState(() {
+      if (!mounted) return;
+      setState(() {
+        _incomingContactIds = TransferService().incomingContactIds;
+        if (event is TransferCompleted && event.direction == TransferDirection.incoming) {
           _unreadCounts[event.contactNodeIdHex] =
               (_unreadCounts[event.contactNodeIdHex] ?? 0) + 1;
-        });
-      }
+        }
+      });
     });
     _topologySubscription = MessagingService().topologyStream.listen((
       response,
@@ -209,6 +264,21 @@ class _HomeScreenState extends State<HomeScreen> {
       ..removeListener(_refresh)
       ..dispose();
     super.dispose();
+  }
+
+  Future<void> _loadNotices() async {
+    final rows = await DatabaseService().loadNotices();
+    if (!mounted) return;
+    setState(() {
+      _notices
+        ..clear()
+        ..addAll(rows.map((r) => _NoticeEntry(
+              senderName: r['sender_name'] as String,
+              text: r['text'] as String,
+              timestamp: r['timestamp'] as int,
+              isLong: (r['is_long'] as int) == 1,
+            )));
+    });
   }
 
   Future<void> _loadContacts() async {
@@ -505,6 +575,34 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  void _showNoticeDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => _NoticeSendDialog(
+        settings: _settings,
+        onSent: (text, mode) {
+          if (!mounted) return;
+          final name = _settings.displayName.trim();
+          final senderName = name.isNotEmpty ? name : '나';
+          final entry = _NoticeEntry(
+            senderName: senderName,
+            text: text,
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            isLong: mode == MessageSendMode.longNotice,
+          );
+          setState(() => _notices.add(entry));
+          DatabaseService().saveNotice(
+            senderName: entry.senderName,
+            text: entry.text,
+            timestamp: entry.timestamp,
+            isLong: entry.isLong,
+          );
+        },
+      ),
     );
   }
 
@@ -1753,7 +1851,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               _TransportButton(
                 label: _transport(TransportKind.lan).kind.label,
-                icon: Icons.lan_outlined,
+                icon: Icons.wifi,
                 enabled: _transport(TransportKind.lan).enabled,
                 available: _transport(TransportKind.lan).available,
                 onPressed: _toggleLan,
@@ -1818,6 +1916,7 @@ class _HomeScreenState extends State<HomeScreen> {
           onSelected: (filter) => setState(() => _filter = filter),
           onImport: _importContacts,
           onExport: _exportContacts,
+          onSendNotice: () => _showNoticeDialog(context),
         ),
         const VerticalDivider(width: 1),
         Expanded(child: _buildFilteredList()),
@@ -1828,6 +1927,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildFilteredList() {
     final selfContact = _selfContact();
     final savedContacts = _savedContactsExcludingSelf();
+    if (_filter == HomeFilter.notices) {
+      return _NoticeBoardView(notices: _notices);
+    }
     if (_filter == HomeFilter.groups) {
       return _GroupList(
         groups: buildGroups([selfContact, ...savedContacts]),
@@ -1852,6 +1954,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return _ContactList(
       contacts: contacts,
       unreadCounts: _unreadCounts,
+      incomingContactIds: _incomingContactIds,
       onTap: _openChat,
       onAction: _handleContactAction,
       onScan: _runScan,
@@ -1894,6 +1997,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _ContactTile(
                   contact: contact,
                   unreadCount: _unreadCounts[contactCode(contact)] ?? 0,
+                  isReceiving: _incomingContactIds.contains(contactCode(contact)),
                   onTap: () => _openChat(contact),
                   onAction: (action) => _handleContactAction(contact, action),
                 ),
@@ -2001,7 +2105,7 @@ class _HomeScreenState extends State<HomeScreen> {
         iconTheme: WidgetStateProperty.resolveWith((states) {
           return IconThemeData(
             color: states.contains(WidgetState.selected)
-                ? _accent
+                ? _HomeScreenState.selectedColor(context)
                 : scheme.onSurfaceVariant,
           );
         }),
@@ -2021,7 +2125,10 @@ class _HomeScreenState extends State<HomeScreen> {
             unawaited(_openQrScreen());
             return;
           }
-          setState(() => _section = _HomeSection.values[index]);
+          setState(() {
+            _section = _HomeSection.values[index];
+            if (index == 0) _filter = HomeFilter.all;
+          });
         },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
@@ -2053,8 +2160,8 @@ class _TransportButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = enabled
-        ? _HomeScreenState._accent
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+        ? _HomeScreenState.transportOnColor(context)
+        : _HomeScreenState.transportOffColor(context);
     return Tooltip(
       message: available ? '$label On/Off' : '$label 지원 예정',
       child: InkWell(
@@ -2151,17 +2258,32 @@ class _TransportButtonOldRemoved extends StatelessWidget {
   }
 }
 
+class _NoticeEntry {
+  final String senderName;
+  final String text;
+  final int timestamp;
+  final bool isLong;
+  const _NoticeEntry({
+    required this.senderName,
+    required this.text,
+    required this.timestamp,
+    required this.isLong,
+  });
+}
+
 class _FilterRail extends StatelessWidget {
   final HomeFilter selected;
   final ValueChanged<HomeFilter> onSelected;
   final VoidCallback onImport;
   final VoidCallback onExport;
+  final VoidCallback? onSendNotice;
 
   const _FilterRail({
     required this.selected,
     required this.onSelected,
     required this.onImport,
     required this.onExport,
+    this.onSendNotice,
   });
 
   @override
@@ -2171,6 +2293,19 @@ class _FilterRail extends StatelessWidget {
       child: Column(
         children: [
           const SizedBox(height: 10),
+          _FilterButton(
+            icon: Icons.campaign_outlined,
+            label: '공지',
+            selected: selected == HomeFilter.notices,
+            onPressed: () => onSelected(HomeFilter.notices),
+          ),
+          if (selected == HomeFilter.notices && onSendNotice != null)
+            _FilterButton(
+              icon: Icons.add_alert_outlined,
+              label: '보내기',
+              selected: false,
+              onPressed: onSendNotice!,
+            ),
           _FilterButton(
             icon: Icons.people_outline,
             label: 'All',
@@ -2209,6 +2344,7 @@ class _FilterRail extends StatelessWidget {
             onPressed: onExport,
           ),
           const Spacer(),
+          const SizedBox(height: 12),
           _ConnectionBadge(
             bleService: BleService(),
             messagingService: MessagingService(),
@@ -2216,6 +2352,81 @@ class _FilterRail extends StatelessWidget {
           const SizedBox(height: 8),
         ],
       ),
+    );
+  }
+}
+
+class _NoticeBoardView extends StatelessWidget {
+  final List<_NoticeEntry> notices;
+  const _NoticeBoardView({required this.notices});
+
+  @override
+  Widget build(BuildContext context) {
+    if (notices.isEmpty) {
+      return const Center(
+        child: Text('수신된 공지가 없습니다', style: TextStyle(color: Colors.white54)),
+      );
+    }
+    return ListView.separated(
+      reverse: true,
+      padding: const EdgeInsets.all(12),
+      itemCount: notices.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final entry = notices[notices.length - 1 - index];
+        final time = formatRelativeTime(entry.timestamp);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFF9800),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.campaign, color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.senderName,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF9800).withAlpha(40),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            entry.isLong ? '공지L' : '공지S',
+                            style: const TextStyle(color: Color(0xFFFF9800), fontSize: 10),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(time, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(entry.text, style: const TextStyle(fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2236,7 +2447,7 @@ class _FilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected
-        ? _HomeScreenState._accent
+        ? _HomeScreenState.selectedColor(context)
         : Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
@@ -2245,12 +2456,12 @@ class _FilterButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
           width: 66,
-          height: 58,
+          height: 46,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(icon, color: color, size: 20),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(label, style: TextStyle(color: color, fontSize: 10)),
@@ -2266,6 +2477,7 @@ class _FilterButton extends StatelessWidget {
 class _ContactList extends StatelessWidget {
   final List<Contact> contacts;
   final Map<String, int> unreadCounts;
+  final Set<String> incomingContactIds;
   final ValueChanged<Contact> onTap;
   final void Function(Contact, _ContactAction) onAction;
   final VoidCallback onScan;
@@ -2273,6 +2485,7 @@ class _ContactList extends StatelessWidget {
   const _ContactList({
     required this.contacts,
     required this.unreadCounts,
+    required this.incomingContactIds,
     required this.onTap,
     required this.onAction,
     required this.onScan,
@@ -2297,6 +2510,7 @@ class _ContactList extends StatelessWidget {
         return _ContactTile(
           contact: contact,
           unreadCount: unreadCounts[contactCode(contact)] ?? 0,
+          isReceiving: incomingContactIds.contains(contactCode(contact)),
           onTap: () => onTap(contact),
           onAction: (action) => onAction(contact, action),
         );
@@ -2308,12 +2522,14 @@ class _ContactList extends StatelessWidget {
 class _ContactTile extends StatelessWidget {
   final Contact contact;
   final int unreadCount;
+  final bool isReceiving;
   final VoidCallback onTap;
   final ValueChanged<_ContactAction> onAction;
 
   const _ContactTile({
     required this.contact,
     this.unreadCount = 0,
+    this.isReceiving = false,
     required this.onTap,
     required this.onAction,
   });
@@ -2383,6 +2599,10 @@ class _ContactTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (unreadCount > 0) _UnreadBadge(count: unreadCount),
+          if (isReceiving) ...[
+            const _BlinkingDot(),
+            const SizedBox(width: 2),
+          ],
           PopupMenuButton<_ContactAction>(
             tooltip: '연락처 메뉴',
             onSelected: onAction,
@@ -2705,22 +2925,9 @@ class _ScanMapCardState extends State<_ScanMapCard> {
                       label: 'Admin+',
                     ),
                     const SizedBox(height: 5),
-                    _ScanLegendDot(
-                      color: _roleColor(
-                        context,
-                        userLevel: UserLevel.user,
-                        isSelf: false,
-                      ),
+                    const _ScanLegendDot(
+                      color: Color(0xFF87CEEB),
                       label: 'User',
-                    ),
-                    const SizedBox(height: 5),
-                    _ScanLegendDot(
-                      color: _roleColor(
-                        context,
-                        userLevel: UserLevel.server,
-                        isSelf: false,
-                      ),
-                      label: 'Server',
                     ),
                   ],
                 ),
@@ -2811,6 +3018,7 @@ class _ScanMapCardState extends State<_ScanMapCard> {
           center.dx + math.cos(angle) * radius,
           center.dy + math.sin(angle) * radius,
         );
+        final isLive = !isSelf && MessagingService().isDirectlyConnected(graphNode.id);
         indexById[graphNode.id] = scanNodes.length;
         scanNodes.add(
           _ScanMapNode(
@@ -2831,6 +3039,7 @@ class _ScanMapCardState extends State<_ScanMapCard> {
             isSavedContact: contact?.isSaved ?? graphNode.summary.isSaved,
             isFavorite: contact?.isFavorite ?? false,
             contact: contact,
+            isLive: isLive,
           ),
         );
       }
@@ -3582,6 +3791,7 @@ class _ScanMapNode {
   final bool isSavedContact;
   final bool isFavorite;
   final Contact? contact;
+  final bool isLive;
 
   const _ScanMapNode({
     required this.id,
@@ -3596,6 +3806,7 @@ class _ScanMapNode {
     this.isSavedContact = false,
     this.isFavorite = false,
     this.contact,
+    this.isLive = false,
   });
 }
 
@@ -3791,9 +4002,21 @@ class _ScanMapNodeButton extends StatefulWidget {
 
 class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
     with SingleTickerProviderStateMixin {
+  static const Color _liveUserColor = Color(0xFF87CEEB);
   late final AnimationController _pulseController;
 
   bool get _shouldPulse => !widget.node.isMe && !widget.node.isSavedContact;
+
+  Color _nodeColor(BuildContext context) {
+    if (widget.node.isMe) return _roleColor(context, userLevel: widget.node.userLevel, isSelf: true);
+    if (widget.node.userLevel == UserLevel.creator ||
+        widget.node.userLevel == UserLevel.builder ||
+        widget.node.userLevel == UserLevel.admin) {
+      return _roleColor(context, userLevel: widget.node.userLevel, isSelf: false);
+    }
+    if (widget.node.isLive) return _liveUserColor;
+    return _roleColor(context, userLevel: widget.node.userLevel, isSelf: false);
+  }
 
   @override
   void initState() {
@@ -3831,11 +4054,8 @@ class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
-    final color = _roleColor(
-      context,
-      userLevel: widget.node.userLevel,
-      isSelf: widget.node.isMe,
-    );
+    final color = _nodeColor(context);
+    final isServer = widget.node.userLevel == UserLevel.server;
     return AnimatedBuilder(
       animation: _pulseController,
       builder: (context, child) {
@@ -3871,12 +4091,22 @@ class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
                         ),
                       ),
                     ),
-                  _ThinDeviceIcon(
-                    type: widget.node.deviceType,
-                    color: iconColor,
-                    size: 25,
-                    strokeWidth: isDark ? 1.35 : 1.45,
-                  ),
+                  if (isServer)
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: iconColor.withAlpha(200),
+                      ),
+                    )
+                  else
+                    _ThinDeviceIcon(
+                      type: widget.node.deviceType,
+                      color: iconColor,
+                      size: 25,
+                      strokeWidth: isDark ? 1.35 : 1.45,
+                    ),
                   if (widget.showConnectionCount)
                     Positioned(
                       right: 3,
@@ -3909,15 +4139,23 @@ class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
   }
 }
 
+enum _DemoChatItemType { text, file, image }
+
 class _DemoChatMessage {
   final String text;
   final bool outgoing;
   final int timestamp;
+  final _DemoChatItemType type;
+  final String? fileName;
+  final bool isTimedMsg;
 
   const _DemoChatMessage({
     required this.text,
     required this.outgoing,
     required this.timestamp,
+    this.type = _DemoChatItemType.text,
+    this.fileName,
+    this.isTimedMsg = false,
   });
 }
 
@@ -3940,7 +4178,15 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
   late final VirtualMeshSimulator _simulator;
   final _messages = <_DemoChatMessage>[];
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   MessageSendMode _mode = MessageSendMode.normal;
+
+  String get _selfName {
+    final name = widget.self.displayName?.trim() ?? '';
+    return name.isNotEmpty ? name : 'Me';
+  }
+
+  String get _contactName => contactDisplayName(widget.contact);
 
   @override
   void initState() {
@@ -3954,17 +4200,30 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _send() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _send({String? overrideText, _DemoChatItemType type = _DemoChatItemType.text, String? fileName}) {
+    final text = overrideText ?? _controller.text.trim();
+    if (text.isEmpty && type == _DemoChatItemType.text) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final result = _simulator.send(
       senderId: nodeIdHex(widget.self.nodeId),
       targetId: contactCode(widget.contact),
-      text: text,
+      text: text.isNotEmpty ? text : (fileName ?? '파일'),
       mode: _mode,
       nowMs: now,
     );
@@ -3977,19 +4236,31 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
 
     setState(() {
       _messages.add(
-        _DemoChatMessage(text: text, outgoing: true, timestamp: now),
+        _DemoChatMessage(
+          text: text.isNotEmpty ? text : (fileName ?? '파일'),
+          outgoing: true,
+          timestamp: now,
+          type: type,
+          fileName: fileName,
+          isTimedMsg: _mode == MessageSendMode.timed,
+        ),
       );
       if (!_mode.isNotice) {
+        final replyText = '(Re: "$_selfName"-"$_contactName") ${text.isNotEmpty ? text : (fileName ?? "파일")}';
         _messages.add(
           _DemoChatMessage(
-            text: '(Re)$text',
+            text: replyText,
             outgoing: false,
             timestamp: now + 500,
+            type: type,
+            fileName: fileName,
+            isTimedMsg: _mode == MessageSendMode.timed,
           ),
         );
       }
       _controller.clear();
     });
+    _scrollToBottom();
 
     if (_mode.isNotice) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4002,79 +4273,140 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     }
   }
 
+  Future<void> _sendFileOrImage(_DemoChatItemType type) async {
+    final label = type == _DemoChatItemType.file ? '파일' : '이미지';
+    final fileName = await _showFilenameDialog(label);
+    if (fileName == null || fileName.trim().isEmpty) return;
+    _send(overrideText: '', type: type, fileName: fileName.trim());
+  }
+
+  Future<String?> _showFilenameDialog(String label) {
+    var value = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$label 이름'),
+        content: TextField(
+          autofocus: true,
+          onChanged: (v) => value = v,
+          decoration: InputDecoration(hintText: 'example.$label == file ? "bin" : "jpg"'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, value),
+            child: const Text('전송'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isDark = scheme.brightness == Brightness.dark;
+    final accentColor = const Color(0xFFFF9800);
+    final contactName = _contactName;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('${contactDisplayName(widget.contact)} · Demo'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: accentColor.withAlpha(40),
+              child: Text(
+                contactName.isNotEmpty ? contactName[0].toUpperCase() : '?',
+                style: TextStyle(color: accentColor, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                contactName,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
-                final message = _messages[index];
-                return Align(
-                  alignment: message.outgoing
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: message.outgoing
-                            ? scheme.primaryContainer
-                            : scheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        child: Text(message.text),
-                      ),
-                    ),
-                  ),
-                );
+                final msg = _messages[index];
+                return _buildBubble(context, msg, accentColor, isDark, scheme);
               },
             ),
           ),
           SafeArea(
             top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Container(
+              color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
               child: Row(
                 children: [
-                  DropdownButton<MessageSendMode>(
-                    value: _mode,
-                    items: [
-                      for (final mode in MessageSendMode.values)
-                        DropdownMenuItem(
-                          value: mode,
-                          child: Text(_demoModeLabel(mode)),
-                        ),
-                    ],
+                  _DemoModeDropdown(
+                    mode: _mode,
                     onChanged: (mode) {
                       if (mode != null) setState(() => _mode = mode);
                     },
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
+                  if (_mode == MessageSendMode.normal || _mode == MessageSendMode.timed)
+                    IconButton(
+                      icon: const Icon(Icons.attach_file, size: 20),
+                      onPressed: () => _sendFileOrImage(_DemoChatItemType.file),
+                      tooltip: '파일',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    ),
+                  if (_mode == MessageSendMode.normal || _mode == MessageSendMode.timed)
+                    IconButton(
+                      icon: const Icon(Icons.image_outlined, size: 20),
+                      onPressed: () => _sendFileOrImage(_DemoChatItemType.image),
+                      tooltip: '이미지',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    ),
+                  const SizedBox(width: 4),
                   Expanded(
                     child: TextField(
                       controller: _controller,
                       maxLength: _mode.maxLength,
-                      decoration: const InputDecoration(
-                        hintText: 'Demo message',
+                      decoration: InputDecoration(
+                        hintText: '메시지 입력',
                         counterText: '',
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          borderSide: BorderSide(color: scheme.outlineVariant),
+                        ),
+                        isDense: true,
                       ),
                       onSubmitted: (_) => _send(),
                     ),
                   ),
-                  IconButton(onPressed: _send, icon: const Icon(Icons.send)),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    onPressed: _send,
+                    icon: Icon(Icons.send, color: accentColor),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
                 ],
               ),
             ),
@@ -4084,14 +4416,101 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     );
   }
 
-  String _demoModeLabel(MessageSendMode mode) {
-    return switch (mode) {
-      MessageSendMode.normal => '일반',
-      MessageSendMode.timed => '타임',
-      MessageSendMode.shortNotice => '공지S',
-      MessageSendMode.longNotice => '공지L',
-    };
+  Widget _buildBubble(BuildContext context, _DemoChatMessage msg, Color accentColor, bool isDark, ColorScheme scheme) {
+    final outBg = isDark ? accentColor.withAlpha(180) : accentColor;
+    final inBg = isDark ? const Color(0xFF2C2C2C) : Colors.white;
+    final outTextColor = Colors.white;
+    final inTextColor = isDark ? Colors.white : Colors.black87;
+    final time = formatRelativeTime(msg.timestamp);
+
+    Widget content;
+    if (msg.type == _DemoChatItemType.file) {
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.insert_drive_file_outlined, size: 18, color: msg.outgoing ? outTextColor : accentColor),
+          const SizedBox(width: 6),
+          Text(msg.fileName ?? msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor)),
+        ],
+      );
+    } else if (msg.type == _DemoChatItemType.image) {
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.image_outlined, size: 18, color: msg.outgoing ? outTextColor : accentColor),
+          const SizedBox(width: 6),
+          Text(msg.fileName ?? msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor)),
+        ],
+      );
+    } else {
+      content = Text(msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor));
+    }
+
+    return Align(
+      alignment: msg.outgoing ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Column(
+          crossAxisAlignment: msg.outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Container(
+              constraints: const BoxConstraints(maxWidth: 260),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: msg.outgoing ? outBg : inBg,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(msg.outgoing ? 16 : 4),
+                  bottomRight: Radius.circular(msg.outgoing ? 4 : 16),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withAlpha(20),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: content,
+            ),
+            const SizedBox(height: 2),
+            Text(time, style: const TextStyle(color: Colors.white38, fontSize: 9)),
+          ],
+        ),
+      ),
+    );
   }
+}
+
+class _DemoModeDropdown extends StatelessWidget {
+  final MessageSendMode mode;
+  final ValueChanged<MessageSendMode?> onChanged;
+  const _DemoModeDropdown({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButton<MessageSendMode>(
+      value: mode,
+      isDense: true,
+      underline: const SizedBox.shrink(),
+      items: [
+        for (final m in MessageSendMode.values.where((m) => !m.isNotice))
+          DropdownMenuItem(
+            value: m,
+            child: Text(_label(m), style: const TextStyle(fontSize: 12)),
+          ),
+      ],
+      onChanged: onChanged,
+    );
+  }
+
+  String _label(MessageSendMode m) => switch (m) {
+    MessageSendMode.normal => '일반',
+    MessageSendMode.timed => '타임',
+    MessageSendMode.shortNotice => '공지S',
+    MessageSendMode.longNotice => '공지L',
+  };
 }
 
 class _ThinDeviceIcon extends StatelessWidget {
@@ -4335,7 +4754,7 @@ class _ConnectionBadge extends StatelessWidget {
                 Icon(Icons.circle, size: 9, color: dotColor),
                 const SizedBox(height: 2),
                 Text(
-                  '${fmt(lanCount)} LAN',
+                  '${fmt(lanCount)} WiFi',
                   style: TextStyle(color: lanColor, fontSize: 9),
                   textAlign: TextAlign.center,
                 ),
@@ -4898,6 +5317,176 @@ class _ImportDialogState extends State<_ImportDialog> {
           child: const Text('파일 선택'),
         ),
       ],
+    );
+  }
+}
+
+// ── Notice Send Dialog ────────────────────────────────────────────────────────
+
+class _NoticeSendDialog extends StatefulWidget {
+  final AppSettings settings;
+  final void Function(String text, MessageSendMode mode)? onSent;
+  const _NoticeSendDialog({required this.settings, this.onSent});
+
+  @override
+  State<_NoticeSendDialog> createState() => _NoticeSendDialogState();
+}
+
+class _NoticeSendDialogState extends State<_NoticeSendDialog> {
+  MessageSendMode _mode = MessageSendMode.shortNotice;
+  final _controller = TextEditingController();
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    if (widget.settings.demoMode) {
+      widget.onSent?.call(text, _mode);
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final sent = await MessagingService().sendTextMessage(
+        targetNodeId: IdentityService().myNodeId, // notice broadcasts to all
+        text: text,
+        mode: _mode,
+      );
+      if (!mounted) return;
+      if (sent) {
+        widget.onSent?.call(text, _mode);
+        Navigator.pop(context);
+      } else {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('공지 전송 실패. 쿨다운 또는 연결을 확인하세요.')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('공지 전송 오류: $e')),
+      );
+    }
+  }
+
+  String _cooldownInfo(MessageSendMode mode) {
+    final settings = AppSettingsService().current;
+    final cooldown = settings.userLevel.noticeCooldown(mode);
+    if (cooldown == null) return '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastUsed = mode == MessageSendMode.shortNotice
+        ? settings.lastShortNoticeAt
+        : settings.lastLongNoticeAt;
+    if (lastUsed <= 0) return '';
+    final remaining = cooldown.inMilliseconds - (now - lastUsed);
+    if (remaining <= 0) return '';
+    final hours = remaining ~/ 3600000;
+    final minutes = (remaining % 3600000) ~/ 60000;
+    final hh = hours.toString().padLeft(2, '0');
+    final mm = minutes.toString().padLeft(2, '0');
+    return '재사용 $hh:$mm 후';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cooldown = _cooldownInfo(_mode);
+    return AlertDialog(
+      title: const Text('공지 전송'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButton<MessageSendMode>(
+            value: _mode,
+            isExpanded: true,
+            items: const [
+              DropdownMenuItem(value: MessageSendMode.shortNotice, child: Text('공지S (단기)')),
+              DropdownMenuItem(value: MessageSendMode.longNotice, child: Text('공지L (장기)')),
+            ],
+            onChanged: (mode) {
+              if (mode != null) setState(() => _mode = mode);
+            },
+          ),
+          if (cooldown.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(cooldown, style: const TextStyle(color: Colors.orange, fontSize: 12)),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: _mode.maxLength,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: '공지 내용',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          onPressed: _sending ? null : _send,
+          child: _sending
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('전송'),
+        ),
+      ],
+    );
+  }
+}
+
+// ── 수신 중 깜박이는 점 ──────────────────────────────────────────────────────────
+class _BlinkingDot extends StatefulWidget {
+  const _BlinkingDot();
+
+  @override
+  State<_BlinkingDot> createState() => _BlinkingDotState();
+}
+
+class _BlinkingDotState extends State<_BlinkingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(begin: 0.15, end: 1.0).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: Text(
+        '●',
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+          fontSize: 9,
+        ),
+      ),
     );
   }
 }
