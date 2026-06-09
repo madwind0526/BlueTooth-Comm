@@ -12,6 +12,7 @@ import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
+import 'package:mesh_comm/features/transfer/transfer_service.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
 
 class GroupChatScreen extends StatefulWidget {
@@ -53,6 +54,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final _scrollController = ScrollController();
   StreamSubscription<GroupMessage>? _msgSubscription;
   StreamSubscription<ChatGroup>? _updateSubscription;
+  StreamSubscription<dynamic>? _transferSubscription;
+  final Map<String, ({TransferMeta meta, double progress, TransferDirection direction})>
+      _activeTransfers = {};
   MessageSendMode _messageMode = MessageSendMode.normal;
   bool _isSending = false;
 
@@ -69,12 +73,32 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         .listen((updated) {
       if (mounted) setState(() => _group = updated);
     });
+    _transferSubscription = MessagingService().transferStream.listen((event) {
+      if (!mounted) return;
+      setState(() {
+        switch (event) {
+          case TransferStarted():
+            _activeTransfers[event.tid] =
+                (meta: event.meta, progress: 0.0, direction: event.direction);
+          case TransferProgress():
+            final prev = _activeTransfers[event.tid];
+            if (prev != null) {
+              _activeTransfers[event.tid] =
+                  (meta: prev.meta, progress: event.progress, direction: prev.direction);
+            }
+          case TransferCompleted():
+          case TransferFailed():
+            _activeTransfers.remove(event.tid);
+        }
+      });
+    });
   }
 
   @override
   void dispose() {
     _msgSubscription?.cancel();
     _updateSubscription?.cancel();
+    _transferSubscription?.cancel();
     _controller.dispose();
     _keyboardFocusNode.dispose();
     _scrollController.dispose();
@@ -415,6 +439,83 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  Widget _buildTransferBanner() {
+    return Container(
+      color: const Color(0xFF1A1A2E),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: _activeTransfers.entries.map((entry) {
+          final tid = entry.key;
+          final t = entry.value;
+          final isOut = t.direction == TransferDirection.outgoing;
+          final label = isOut ? '전송 중' : '수신 중';
+          final icon = t.meta.kind == TransferKind.image
+              ? Icons.image_outlined
+              : Icons.insert_drive_file_outlined;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(icon, size: 14, color: _textSecondary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$label: ${t.meta.fileName}',
+                              style: const TextStyle(
+                                color: _textSecondary,
+                                fontSize: 11,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (!isOut) ...[
+                            const SizedBox(width: 4),
+                            const _BlinkingDots(),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      LinearProgressIndicator(
+                        value: t.progress,
+                        backgroundColor: const Color(0xFF2A2A3E),
+                        color: isOut
+                            ? const Color(0xFFFF9800)
+                            : const Color(0xFF4ADE80),
+                        minHeight: 3,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${(t.progress * 100).toInt()}%',
+                  style: const TextStyle(color: _textSecondary, fontSize: 10),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    TransferService().cancelTransfer(tid);
+                    MessagingService().cancelTransfer(tid);
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Icon(Icons.close, size: 14, color: Color(0xFFF87171)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -422,6 +523,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       appBar: _buildAppBar(),
       body: Column(
         children: [
+          if (_activeTransfers.isNotEmpty) _buildTransferBanner(),
           Expanded(child: _buildMessageList()),
           _buildInputBar(),
         ],
@@ -758,3 +860,43 @@ bool _bytesEqual(Uint8List a, Uint8List b) {
 
 String _hex(Uint8List bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+class _BlinkingDots extends StatefulWidget {
+  const _BlinkingDots();
+  @override
+  State<_BlinkingDots> createState() => _BlinkingDotsState();
+}
+
+class _BlinkingDotsState extends State<_BlinkingDots>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  int _frame = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..addListener(() {
+        final f = (_ctrl.value * 4).floor() % 4;
+        if (f != _frame) setState(() => _frame = f);
+      })
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dots = '.' * (_frame + 1);
+    return Text(
+      dots.padRight(3),
+      style: const TextStyle(color: Color(0xFF9E9EB8), fontSize: 11),
+    );
+  }
+}

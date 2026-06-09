@@ -265,6 +265,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _handleIncomingGroupInvite,
     );
     _groupMessageSubscription = _groupMessaging.messageStream.listen((_) {
+      _playIncomingMessageAlert();
       _loadChatGroups();
     });
     _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
@@ -5057,29 +5058,9 @@ class _ChatGroupTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Stack(
-        children: [
-          const CircleAvatar(
-            backgroundColor: Color(0xFF2D2858),
-            child: Icon(Icons.groups_outlined, color: _HomeScreenState._accent),
-          ),
-          if (group.unreadCount > 0)
-            Positioned(
-              right: 0,
-              top: 0,
-              child: Container(
-                padding: const EdgeInsets.all(3),
-                decoration: const BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  group.unreadCount > 9 ? '9+' : '${group.unreadCount}',
-                  style: const TextStyle(color: Colors.white, fontSize: 9),
-                ),
-              ),
-            ),
-        ],
+      leading: const CircleAvatar(
+        backgroundColor: Color(0xFF2D2858),
+        child: Icon(Icons.groups_outlined, color: _HomeScreenState._accent),
       ),
       title: Text(
         group.name,
@@ -5092,15 +5073,21 @@ class _ChatGroupTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 11),
       ),
-      trailing: PopupMenuButton<_GroupAction>(
-        tooltip: 'Group 메뉴',
-        onSelected: onAction,
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: _GroupAction.viewMembers, child: Text('그룹원 보기')),
-          PopupMenuDivider(),
-          PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
-          PopupMenuDivider(),
-          PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (group.unreadCount > 0) _UnreadBadge(count: group.unreadCount),
+          PopupMenuButton<_GroupAction>(
+            tooltip: 'Group 메뉴',
+            onSelected: onAction,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: _GroupAction.viewMembers, child: Text('그룹원 보기')),
+              PopupMenuDivider(),
+              PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
+              PopupMenuDivider(),
+              PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
+            ],
+          ),
         ],
       ),
       onTap: onTap,
