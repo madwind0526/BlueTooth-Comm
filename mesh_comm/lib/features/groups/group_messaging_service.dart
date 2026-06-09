@@ -99,11 +99,9 @@ class GroupMessagingService {
 
   /// 그룹 메시지를 모든 멤버에게 전송한다.
   /// 직접 연결 여부 무관: relay가 비연결 멤버까지 전달한다.
-  /// [connectedChecker]: 파일/이미지 TransferService 전송 시 사용 (text 전송에는 미사용)
   Future<int> sendGroupMessage({
     required ChatGroup group,
     required String text,
-    required bool Function(String nodeIdHex) connectedChecker,
     String? filePrefix, // '__FILE__' or '__IMAGE__'
   }) async {
     final myNodeId = IdentityService().myNodeId;
@@ -137,12 +135,11 @@ class GroupMessagingService {
     return sent;
   }
 
-  /// 멤버 추가/제거/방장 변경 공지를 모든 직접 연결된 멤버에게 전송.
+  /// 멤버 추가/제거/방장 변경 공지를 모든 멤버에게 전송 (relay로 비연결 멤버도 수신).
   Future<void> broadcastMemberUpdate({
     required ChatGroup group,
     required String action, // 'add' | 'remove' | 'leader'
     required Uint8List targetNodeId,
-    required bool Function(String) connectedChecker,
     Uint8List? newLeaderId,
   }) async {
     final myHex = _hex(IdentityService().myNodeId);
@@ -154,15 +151,13 @@ class GroupMessagingService {
     };
     for (final member in group.members) {
       if (member.nodeIdHex == myHex) continue;
-      if (!connectedChecker(member.nodeIdHex)) continue;
       await _send(member.nodeId, MsgType.groupMemberUpdate, payload);
     }
   }
 
-  /// 그룹 나가기 패킷을 모든 직접 연결된 멤버에게 전송.
+  /// 그룹 나가기 패킷을 모든 멤버에게 전송 (relay로 비연결 멤버도 수신).
   Future<void> broadcastLeave({
     required ChatGroup group,
-    required bool Function(String) connectedChecker,
     Uint8List? newLeaderId,
   }) async {
     final myHex = _hex(IdentityService().myNodeId);
@@ -172,7 +167,6 @@ class GroupMessagingService {
     };
     for (final member in group.members) {
       if (member.nodeIdHex == myHex) continue;
-      if (!connectedChecker(member.nodeIdHex)) continue;
       await _send(member.nodeId, MsgType.groupLeave, payload);
     }
   }
@@ -235,10 +229,26 @@ class GroupMessagingService {
     final accepted = json['ok'] as bool;
     if (!accepted) return;
 
-    // 수락 → 그룹에 멤버 추가 + 공지 broadcast는 호출자에서 처리
     final group = await _groupService.getGroup(groupId);
     if (group == null) return;
+
+    // 신규 멤버 DB 추가
     await _groupService.addMember(groupId, senderNodeId);
+
+    // 기존 멤버들에게 신규 멤버 가입 공지 (relay 통해 비연결 멤버도 수신)
+    final myHex = _hex(IdentityService().myNodeId);
+    final newMemberHex = _hex(senderNodeId);
+    final updatePayload = {
+      'gid': groupId,
+      'act': 'add',
+      'tid': newMemberHex,
+    };
+    for (final member in group.members) {
+      if (member.nodeIdHex == myHex) continue;
+      if (member.nodeIdHex == newMemberHex) continue; // 본인에게는 불필요
+      await _send(member.nodeId, MsgType.groupMemberUpdate, updatePayload);
+    }
+
     final updated = await _groupService.getGroup(groupId);
     if (updated != null) _updateController.add(updated);
   }

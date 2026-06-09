@@ -138,7 +138,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final sent = await _groupMessaging.sendGroupMessage(
       group: _group,
       text: text,
-      connectedChecker: MessagingService().isDirectlyConnected,
     );
     if (!mounted) return;
     setState(() {
@@ -167,7 +166,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await _groupMessaging.sendGroupMessage(
       group: _group,
       text: file.name,
-      connectedChecker: MessagingService().isDirectlyConnected,
       filePrefix: '__FILE__',
     );
     if (mounted) {
@@ -198,7 +196,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await _groupMessaging.sendGroupMessage(
       group: _group,
       text: file.name,
-      connectedChecker: MessagingService().isDirectlyConnected,
       filePrefix: '__IMAGE__',
     );
     if (mounted) {
@@ -306,10 +303,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
 
     if (contact == null || !mounted) return;
-    await _groupService.addMember(_group.groupId, contact.nodeId);
+    // 수락 전 addMember 하지 않음 — _handleInviteResp에서 처리
     await _groupMessaging.sendInvite(group: _group, targetNodeId: contact.nodeId);
-    final updated = await _groupService.getGroup(_group.groupId);
-    if (updated != null && mounted) setState(() => _group = updated);
+    _showMessage('${contactDisplayName(contact)}에게 초대장을 보냈습니다.');
   }
 
   Future<void> _kickMember() async {
@@ -339,12 +335,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
     if (target == null || !mounted) return;
 
+    // 추방 확인
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('멤버 추방'),
+        content: Text('${_senderName(target.nodeId)}을(를) 추방하시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('추방'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     await _groupService.removeMember(_group.groupId, target.nodeId);
     await _groupMessaging.broadcastMemberUpdate(
       group: _group,
       action: 'remove',
       targetNodeId: target.nodeId,
-      connectedChecker: MessagingService().isDirectlyConnected,
     );
     final updated = await _groupService.getGroup(_group.groupId);
     if (updated != null && mounted) setState(() => _group = updated);
@@ -378,7 +391,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
     await _groupMessaging.broadcastLeave(
       group: _group,
-      connectedChecker: MessagingService().isDirectlyConnected,
       newLeaderId: newLeaderId,
     );
     await _groupService.removeMember(_group.groupId, myNodeId);

@@ -936,16 +936,15 @@ class MessagingService {
     }
 
     // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
-    // 파일 패킷과 그룹 제어 패킷은 직접 연결 전용 — relay하지 않는다.
-    // groupMessage(0x0F)는 relay 허용: PC↔Phone 직접 연결 불안정 시 중간 노드가 중계해야 한다.
+    // 파일 패킷과 그룹 초대 패킷은 직접 연결 전용 — relay하지 않는다.
+    // groupMessage / groupMemberUpdate / groupLeave 는 relay 허용:
+    //   PC↔Phone 직접 연결 불안정 시 중간 노드(S26 등)가 중계해야 한다.
     if (packet.msgType == MsgType.fileHeader ||
         packet.msgType == MsgType.fileChunk ||
         packet.msgType == MsgType.fileAck ||
         packet.msgType == MsgType.fileCancel ||
         packet.msgType == MsgType.groupInvite ||
-        packet.msgType == MsgType.groupInviteResp ||
-        packet.msgType == MsgType.groupMemberUpdate ||
-        packet.msgType == MsgType.groupLeave) {
+        packet.msgType == MsgType.groupInviteResp) {
       return;
     }
 

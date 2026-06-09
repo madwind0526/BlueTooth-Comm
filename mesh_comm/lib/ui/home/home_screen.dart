@@ -308,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final groupName = invite.groupName;
     showDialog<void>(
       context: context,
+      barrierDismissible: false, // 창 밖 클릭으로 초대 사라지지 않도록
       builder: (ctx) => AlertDialog(
         title: const Text('그룹 초대'),
         content: Text('[$groupName] 그룹에 초대되었습니다.\n수락하시겠습니까?'),
@@ -327,6 +328,11 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
               await _groupService.acceptInvite(invite);
+              // 수락자 본인을 그룹에 추가 (invite.memberIds에는 자신이 없음)
+              await _groupService.addMember(
+                invite.groupId,
+                IdentityService().myNodeId,
+              );
               await _groupMessaging.sendInviteResponse(
                 groupId: invite.groupId,
                 toNodeId: invite.fromNodeId,
@@ -762,8 +768,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _showMessage('${contactDisplayName(contact)}을(를) ${group.name}에 초대했습니다. (Demo)');
         return;
       }
-      await _groupService.addMember(groupId, contact.nodeId);
+      // 수락 전에는 addMember 하지 않음 — _handleInviteResp에서 처리
       await _groupMessaging.sendInvite(group: group, targetNodeId: contact.nodeId);
+      _showMessage('${contactDisplayName(contact)}에게 초대장을 보냈습니다.');
       _loadChatGroups();
     } else if (result.startsWith('new:')) {
       final name = result.substring('new:'.length).trim();
