@@ -1460,8 +1460,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<String?> _saveJsonFile(String json, String filename) async {
+    final meshDir = await TransferStorageService.meshCommPublicDir();
     try {
-      final meshDir = await TransferStorageService.meshCommPublicDir();
+      // Desktop(Windows): 파일 저장 다이얼로그
       final location = await getSaveLocation(
         suggestedName: filename,
         initialDirectory: meshDir.path,
@@ -1473,8 +1474,14 @@ class _HomeScreenState extends State<HomeScreen> {
       await File(location.path).writeAsString(json);
       return location.path;
     } catch (_) {
-      final dir = await TransferStorageService.meshCommPublicDir();
-      final file = File(p.join(dir.path, filename));
+      // Android: getSaveLocation 미지원 → 폴더 선택창 (선택 즉시 저장)
+      String? dirPath;
+      try {
+        dirPath = await getDirectoryPath(initialDirectory: meshDir.path);
+      } catch (_) {}
+      // 사용자가 취소하거나 폴더 선택 미지원 시 기본 경로로 저장
+      dirPath ??= meshDir.path;
+      final file = File(p.join(dirPath, filename));
       await file.writeAsString(json);
       return file.path;
     }
@@ -1546,24 +1553,25 @@ class _HomeScreenState extends State<HomeScreen> {
           'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.enc.json';
       String savedPath;
 
+      final meshDir = await TransferStorageService.meshCommPublicDir();
       try {
-        final meshDir = await TransferStorageService.meshCommPublicDir();
+        // Desktop: 파일 저장 다이얼로그
         final location = await getSaveLocation(
           suggestedName: filename,
           initialDirectory: meshDir.path,
           acceptedTypeGroups: const [
-            XTypeGroup(
-              label: 'Encrypted MeshComm identity',
-              extensions: ['json'],
-            ),
+            XTypeGroup(label: 'Encrypted MeshComm identity', extensions: ['json']),
           ],
         );
         if (location == null) return;
         await File(location.path).writeAsString(json);
         savedPath = location.path;
       } catch (_) {
-        final dir = await TransferStorageService.meshCommPublicDir();
-        final file = File(p.join(dir.path, filename));
+        // Android: 폴더 선택창 (선택 즉시 저장)
+        String? dirPath;
+        try { dirPath = await getDirectoryPath(initialDirectory: meshDir.path); } catch (_) {}
+        dirPath ??= meshDir.path;
+        final file = File(p.join(dirPath, filename));
         await file.writeAsString(json);
         savedPath = file.path;
       }
@@ -1669,61 +1677,63 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: Text(confirm ? 'Backup password' : 'Restore password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                confirm
-                    ? '이 암호는 identity backup 파일을 암호화합니다. 앱은 암호를 저장하지 않습니다.'
-                    : 'Backup 때 정한 암호를 입력하세요.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                autofocus: true,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  helperText: '8자 이상',
-                  border: OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  confirm
+                      ? '이 암호는 identity backup 파일을 암호화합니다. 앱은 암호를 저장하지 않습니다.'
+                      : 'Backup 때 정한 암호를 입력하세요.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
-                onChanged: (value) {
-                  password = value;
-                  if (errorText != null) {
-                    setDialogState(() => errorText = null);
-                  }
-                },
-              ),
-              if (confirm) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 TextField(
+                  autofocus: true,
                   obscureText: true,
                   decoration: const InputDecoration(
-                    labelText: 'Confirm password',
+                    labelText: 'Password',
+                    helperText: '8자 이상',
                     border: OutlineInputBorder(),
                   ),
                   onChanged: (value) {
-                    confirmPassword = value;
+                    password = value;
                     if (errorText != null) {
                       setDialogState(() => errorText = null);
                     }
                   },
                 ),
-              ],
-              if (errorText != null) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    errorText!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 12,
+                if (confirm) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm password',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      confirmPassword = value;
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+                if (errorText != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      errorText!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
           actions: [
             TextButton(
@@ -4206,9 +4216,27 @@ class _DemoChatScreen extends StatefulWidget {
 }
 
 class _DemoChatScreenState extends State<_DemoChatScreen> {
+  // ── 색상 (chat_screen.dart와 동일) ────────────────────────────────────────────
+  static const Color _bgColor = Color(0xFF1A1A2E);
+  static const Color _surfaceColor = Color(0xFF16213E);
+  static const Color _outgoingBubble = Color(0xFF6C5CE7);
+  static const Color _incomingBubble = Color(0xFF2D2D3F);
+  static const Color _inputBarBg = Color(0xFF16213E);
+  static const Color _textPrimary = Color(0xFFECECEC);
+  static const Color _textSecondary = Color(0xFF9090A0);
+
+  // 드롭다운: 일반/타임/파일/이미지 (chat_screen.dart와 동일 구조)
+  static const _dropdownItems = [
+    ('일반', 'normal'),
+    ('타임', 'timed'),
+    ('파일', 'file'),
+    ('이미지', 'image'),
+  ];
+
   late final VirtualMeshSimulator _simulator;
   final _messages = <_DemoChatMessage>[];
   final _controller = TextEditingController();
+  final _keyboardFocusNode = FocusNode();
   final _scrollController = ScrollController();
   MessageSendMode _mode = MessageSendMode.normal;
 
@@ -4231,6 +4259,7 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _keyboardFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -4304,67 +4333,76 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     }
   }
 
-  Future<void> _sendFileOrImage(_DemoChatItemType type) async {
-    final label = type == _DemoChatItemType.file ? '파일' : '이미지';
-    final fileName = await _showFilenameDialog(label);
-    if (fileName == null || fileName.trim().isEmpty) return;
-    _send(overrideText: '', type: type, fileName: fileName.trim());
+  String get _dropdownValue => switch (_mode) {
+    MessageSendMode.normal => 'normal',
+    MessageSendMode.timed => 'timed',
+    MessageSendMode.shortNotice => 'normal',
+    MessageSendMode.longNotice => 'normal',
+  };
+
+  void _onDropdownChanged(String? value) {
+    if (value == null) return;
+    switch (value) {
+      case 'file':
+        _sendFileOrImage(_DemoChatItemType.file);
+      case 'image':
+        _sendFileOrImage(_DemoChatItemType.image);
+      case 'normal':
+        setState(() => _mode = MessageSendMode.normal);
+      case 'timed':
+        setState(() => _mode = MessageSendMode.timed);
+    }
   }
 
-  Future<String?> _showFilenameDialog(String label) {
-    var value = '';
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('$label 이름'),
-        content: TextField(
-          autofocus: true,
-          onChanged: (v) => value = v,
-          decoration: InputDecoration(hintText: 'example.$label == file ? "bin" : "jpg"'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, value),
-            child: const Text('전송'),
-          ),
-        ],
-      ),
-    );
+  /// 실제 파일 선택창을 열어 파일명을 가져온 뒤 demo 메시지로 전송.
+  Future<void> _sendFileOrImage(_DemoChatItemType type) async {
+    final XFile? file;
+    if (type == _DemoChatItemType.image) {
+      const imageTypes = XTypeGroup(
+        label: 'images',
+        extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+      );
+      file = await openFile(acceptedTypeGroups: [imageTypes]);
+    } else {
+      const typeGroup = XTypeGroup(label: 'files');
+      file = await openFile(acceptedTypeGroups: [typeGroup]);
+    }
+    if (file == null || !mounted) return;
+    _send(overrideText: '', type: type, fileName: file.name);
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final isDark = scheme.brightness == Brightness.dark;
-    final accentColor = const Color(0xFFFF9800);
-    final contactName = _contactName;
-
     return Scaffold(
+      backgroundColor: _bgColor,
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
+        backgroundColor: _surfaceColor,
+        foregroundColor: _textPrimary,
+        elevation: 0,
+        titleSpacing: 0,
         title: Row(
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor: accentColor.withAlpha(40),
+              backgroundColor: const Color(0xFF2D2858),
               child: Text(
-                contactName.isNotEmpty ? contactName[0].toUpperCase() : '?',
-                style: TextStyle(color: accentColor, fontWeight: FontWeight.bold),
+                _contactName.isNotEmpty ? _contactName[0].toUpperCase() : '?',
+                style: const TextStyle(color: Color(0xFFFF9800), fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                contactName,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _contactName,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _textPrimary),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Text('Demo', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
+                ],
               ),
             ),
           ],
@@ -4373,176 +4411,222 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final msg = _messages[index];
-                return _buildBubble(context, msg, accentColor, isDark, scheme);
-              },
-            ),
+            child: _messages.isEmpty
+                ? const Center(child: Text('메시지를 입력하세요.', style: TextStyle(color: _textSecondary, fontSize: 14)))
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) => _buildBubble(context, _messages[index]),
+                  ),
           ),
-          SafeArea(
-            top: false,
-            child: Container(
-              color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-              child: Row(
-                children: [
-                  _DemoModeDropdown(
-                    mode: _mode,
-                    onChanged: (mode) {
-                      if (mode != null) setState(() => _mode = mode);
-                    },
-                  ),
-                  const SizedBox(width: 6),
-                  if (_mode == MessageSendMode.normal || _mode == MessageSendMode.timed)
-                    IconButton(
-                      icon: const Icon(Icons.attach_file, size: 20),
-                      onPressed: () => _sendFileOrImage(_DemoChatItemType.file),
-                      tooltip: '파일',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                  if (_mode == MessageSendMode.normal || _mode == MessageSendMode.timed)
-                    IconButton(
-                      icon: const Icon(Icons.image_outlined, size: 20),
-                      onPressed: () => _sendFileOrImage(_DemoChatItemType.image),
-                      tooltip: '이미지',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      maxLength: _mode.maxLength,
-                      decoration: InputDecoration(
-                        hintText: '메시지 입력',
-                        counterText: '',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: scheme.outlineVariant),
-                        ),
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => _send(),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton(
-                    onPressed: _send,
-                    icon: Icon(Icons.send, color: accentColor),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _buildInputBar(),
         ],
       ),
     );
   }
 
-  Widget _buildBubble(BuildContext context, _DemoChatMessage msg, Color accentColor, bool isDark, ColorScheme scheme) {
-    final outBg = isDark ? accentColor.withAlpha(180) : accentColor;
-    final inBg = isDark ? const Color(0xFF2C2C2C) : Colors.white;
-    final outTextColor = Colors.white;
-    final inTextColor = isDark ? Colors.white : Colors.black87;
-    final time = formatRelativeTime(msg.timestamp);
-
-    Widget content;
-    if (msg.type == _DemoChatItemType.file) {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.insert_drive_file_outlined, size: 18, color: msg.outgoing ? outTextColor : accentColor),
-          const SizedBox(width: 6),
-          Text(msg.fileName ?? msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor)),
-        ],
-      );
-    } else if (msg.type == _DemoChatItemType.image) {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.image_outlined, size: 18, color: msg.outgoing ? outTextColor : accentColor),
-          const SizedBox(width: 6),
-          Text(msg.fileName ?? msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor)),
-        ],
-      );
-    } else {
-      content = Text(msg.text, style: TextStyle(color: msg.outgoing ? outTextColor : inTextColor));
-    }
-
-    return Align(
-      alignment: msg.outgoing ? Alignment.centerRight : Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Column(
-          crossAxisAlignment: msg.outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+  Widget _buildInputBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: const BoxDecoration(
+        color: _inputBarBg,
+        border: Border(top: BorderSide(color: Color(0xFF2A2A3E), width: 1)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // 모드 드롭다운 (chat_screen.dart와 동일 스타일)
             Container(
-              constraints: const BoxConstraints(maxWidth: 260),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              width: 80,
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: msg.outgoing ? outBg : inBg,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(16),
-                  topRight: const Radius.circular(16),
-                  bottomLeft: Radius.circular(msg.outgoing ? 16 : 4),
-                  bottomRight: Radius.circular(msg.outgoing ? 4 : 16),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(20),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
+                color: const Color(0xFF0F0F1E),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFF2A2A3E)),
               ),
-              child: content,
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _dropdownValue,
+                  isExpanded: true,
+                  dropdownColor: _incomingBubble,
+                  selectedItemBuilder: (context) => _dropdownItems
+                      .map((item) => Align(
+                            alignment: Alignment.center,
+                            child: Text(
+                              item.$1,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: _textPrimary, fontSize: 12),
+                            ),
+                          ))
+                      .toList(),
+                  items: _dropdownItems
+                      .map((item) => DropdownMenuItem(
+                            value: item.$2,
+                            child: Center(
+                              child: Text(item.$1,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: _textPrimary)),
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: _onDropdownChanged,
+                ),
+              ),
             ),
-            const SizedBox(height: 2),
-            Text(time, style: const TextStyle(color: Colors.white38, fontSize: 9)),
+            // 텍스트 입력
+            Expanded(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 120),
+                child: KeyboardListener(
+                  focusNode: _keyboardFocusNode,
+                  onKeyEvent: (event) {
+                    if (event is! KeyDownEvent) return;
+                    if (event.logicalKey == LogicalKeyboardKey.enter &&
+                        HardwareKeyboard.instance.isControlPressed) {
+                      _send();
+                    }
+                  },
+                  child: TextField(
+                    controller: _controller,
+                    maxLength: _mode.maxLength,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    style: const TextStyle(color: _textPrimary, fontSize: 15),
+                    cursorColor: _outgoingBubble,
+                    decoration: InputDecoration(
+                      hintText: '메시지 입력',
+                      hintStyle: const TextStyle(color: _textSecondary),
+                      counterText: '',
+                      filled: true,
+                      fillColor: const Color(0xFF0F0F1E),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: _outgoingBubble, width: 1.5),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // 전송 버튼
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _controller,
+              builder: (context, value, _) {
+                final hasText = value.text.trim().isNotEmpty;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  child: IconButton(
+                    onPressed: hasText ? _send : null,
+                    style: IconButton.styleFrom(
+                      backgroundColor: hasText ? _outgoingBubble : const Color(0xFF2A2A3E),
+                      foregroundColor: _textPrimary,
+                      padding: const EdgeInsets.all(12),
+                      minimumSize: const Size(44, 44),
+                    ),
+                    icon: const Icon(Icons.send_rounded, size: 20),
+                    tooltip: '전송',
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
     );
   }
-}
 
-class _DemoModeDropdown extends StatelessWidget {
-  final MessageSendMode mode;
-  final ValueChanged<MessageSendMode?> onChanged;
-  const _DemoModeDropdown({required this.mode, required this.onChanged});
+  Widget _buildBubble(BuildContext context, _DemoChatMessage msg) {
+    final isOutgoing = msg.outgoing;
 
-  @override
-  Widget build(BuildContext context) {
-    return DropdownButton<MessageSendMode>(
-      value: mode,
-      isDense: true,
-      underline: const SizedBox.shrink(),
-      items: [
-        for (final m in MessageSendMode.values.where((m) => !m.isNotice))
-          DropdownMenuItem(
-            value: m,
-            child: Text(_label(m), style: const TextStyle(fontSize: 12)),
+    // 파일/이미지 아이콘 포함 내용
+    Widget innerContent;
+    if (msg.type == _DemoChatItemType.file || msg.type == _DemoChatItemType.image) {
+      final icon = msg.type == _DemoChatItemType.image
+          ? Icons.image_outlined
+          : Icons.insert_drive_file_outlined;
+      innerContent = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: _textPrimary.withAlpha(200)),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              msg.fileName ?? msg.text,
+              style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+            ),
           ),
-      ],
-      onChanged: onChanged,
+        ],
+      );
+    } else {
+      innerContent = Text(
+        msg.text,
+        style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: isOutgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: isOutgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (!isOutgoing) const SizedBox(width: 4),
+              Flexible(
+                child: Container(
+                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isOutgoing ? _outgoingBubble : _incomingBubble,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: Radius.circular(isOutgoing ? 18 : 4),
+                      bottomRight: Radius.circular(isOutgoing ? 4 : 18),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      innerContent,
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatTime(msg.timestamp),
+                        style: TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (isOutgoing) const SizedBox(width: 4),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  String _label(MessageSendMode m) => switch (m) {
-    MessageSendMode.normal => '일반',
-    MessageSendMode.timed => '타임',
-    MessageSendMode.shortNotice => '공지S',
-    MessageSendMode.longNotice => '공지L',
-  };
+  String _formatTime(int timestampMs) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
 }
+
 
 class _ThinDeviceIcon extends StatelessWidget {
   final MeshDeviceType type;
@@ -4724,12 +4808,28 @@ class _GroupTile extends StatelessWidget {
       ),
       title: Row(
         children: [
-          Expanded(child: Text(group.name)),
+          Expanded(
+            child: Text(
+              group.name,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (group.isFavorite)
             const Icon(Icons.star, color: Colors.amber, size: 16),
         ],
       ),
-      subtitle: Text('${group.memberCount}명 · 로컬 Group'),
+      subtitle: Text(
+        () {
+          final lead = group.members.isNotEmpty
+              ? contactDisplayName(group.members.first)
+              : '-';
+          return '${group.memberCount}명 · Lead: $lead';
+        }(),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 11),
+      ),
       trailing: PopupMenuButton<_GroupAction>(
         tooltip: 'Group 메뉴',
         onSelected: onAction,

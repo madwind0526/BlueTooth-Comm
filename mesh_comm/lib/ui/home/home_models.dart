@@ -1,7 +1,7 @@
 import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/identity/user_level.dart';
 
-enum HomeFilter { all, groups, favorites, chats }
+enum HomeFilter { notices, all, groups, favorites, chats }
 
 class LocalContactGroup {
   final String name;

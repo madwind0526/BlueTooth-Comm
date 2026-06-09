@@ -59,6 +59,23 @@ class LanService {
   // 마지막으로 알려진 피어 주소 캐시 (끊김 후 즉시 재연결용)
   final Map<String, LanPeer> _peerAddressCache = {};
 
+  // 피어별 재연결 시도 횟수 (exponential backoff 계산용)
+  final Map<String, int> _reconnectAttempts = {};
+
+  // ── LAN Heartbeat ─────────────────────────────────────────────────────────
+  // PING/PONG: 0xFF 매직 바이트로 MeshPacket과 구별.
+  // 목적: 무음 TCP 끊김 감지 (WiFi 단절 후 onDone/onError 없이 소켓이 죽는 경우).
+  static const int _hbMagic    = 0xFF;
+  static const int _hbPingByte = 0x50; // 'P'
+  static const int _hbPongByte = 0x51; // 'Q'
+  static const int _hbIntervalSec = 8;
+  static const int _hbTimeoutMs  = 20000; // PONG 20초 무응답 → 연결 해제
+
+  // nodeIdHex → 마지막 PONG 수신 시각 (ms)
+  final Map<String, int> _lastPongMs = {};
+  Timer? _heartbeatTimer;
+  Timer? _heartbeatWatchdog;
+
   RawDatagramSocket? _udpSocket;
   ServerSocket? _tcpServer;
   Timer? _beaconTimer;
@@ -98,6 +115,7 @@ class LanService {
     await _startTcpServer();
     await _startUdpSocket();
     _startBeacon();
+    _startHeartbeat();
     // 이전에 알고 있던 피어에 즉시 재연결 시도 (WiFi 토글 복구)
     _reconnectCachedPeers();
   }
@@ -105,6 +123,10 @@ class LanService {
   /// LAN 서비스를 중단한다. start()로 재시작 가능.
   /// 주소 캐시(_peerAddressCache)는 보존 — start() 후 즉시 재연결에 사용.
   Future<void> stop() async {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _heartbeatWatchdog?.cancel();
+    _heartbeatWatchdog = null;
     _beaconTimer?.cancel();
     _beaconTimer = null;
     _udpSocket?.close();
@@ -117,6 +139,8 @@ class LanService {
     _peers.clear();
     _buffers.clear();
     _connecting.clear();
+    _lastPongMs.clear();
+    _reconnectAttempts.clear(); // stop 후 start 시 처음부터 재시도
     // _peerAddressCache 는 의도적으로 유지 — start() 재연결용
     _notifyChange();
   }
@@ -206,6 +230,33 @@ class LanService {
         while (true) {
           final frame = buffer.tryReadFrame();
           if (frame == null) break;
+
+          // ── LAN Heartbeat 우선 처리 ────────────────────────────────────────
+          // MsgPacket 파싱 전에 0xFF 매직 바이트로 PING/PONG 구별.
+          if (frame.length >= 2 && frame[0] == _hbMagic) {
+            if (frame[1] == _hbPingByte) {
+              // PING 수신 → PONG 응답 (현재 연결 수 포함)
+              if (resolvedId != null) {
+                _log('[HB] PING ← $resolvedId');
+              }
+              final pong = _buildFrame(Uint8List.fromList(
+                [_hbMagic, _hbPongByte, _peers.length & 0xFF],
+              ));
+              try {
+                socket.add(pong);
+                unawaited(socket.flush().timeout(const Duration(seconds: 3)));
+              } catch (_) {}
+            } else if (frame[1] == _hbPongByte) {
+              // PONG 수신 → 생존 확인
+              if (resolvedId != null) {
+                final connCount = frame.length > 2 ? frame[2] : 0;
+                _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch;
+                _log('[HB] PONG ← $resolvedId (peer connCount=$connCount)');
+              }
+            }
+            continue; // MeshPacket 파싱 스킵
+          }
+
           final packet = MeshPacket.fromBytes(frame);
           if (packet == null) continue;
 
@@ -215,6 +266,8 @@ class LanService {
             if (!_peers.containsKey(resolvedId)) {
               _peers[resolvedId!] = socket;
               _buffers[resolvedId!] = buffer;
+              _reconnectAttempts.remove(resolvedId); // 연결 성공 → backoff 카운터 리셋
+              _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch; // 초기 생존 시각
               _notifyChange();
               _log('Peer registered via incoming: $resolvedId');
             } else {
@@ -256,6 +309,8 @@ class LanService {
       }
       _peers[knownNodeIdHex] = socket;
       _buffers[knownNodeIdHex] = buffer;
+      _reconnectAttempts.remove(knownNodeIdHex); // 연결 성공 → backoff 카운터 리셋
+      _lastPongMs[knownNodeIdHex] = DateTime.now().millisecondsSinceEpoch; // 초기 생존 시각
       _notifyChange();
     }
   }
@@ -273,11 +328,17 @@ class LanService {
   void _removePeer(String nodeIdHex) {
     _peers.remove(nodeIdHex);
     _buffers.remove(nodeIdHex);
+    _lastPongMs.remove(nodeIdHex);
     _notifyChange();
-    // 캐시에 주소가 있으면 잠시 후 자동 재연결 시도
+    // 캐시에 주소가 있으면 exponential backoff 후 재연결
     final cached = _peerAddressCache[nodeIdHex];
     if (cached != null) {
-      Future<void>.delayed(LanConstants.reconnectDelay, () {
+      final attempt = _reconnectAttempts[nodeIdHex] ?? 0;
+      // 1s → 2s → 4s → 8s → 16s → 32s → 60s 상한
+      final delaySec = attempt < 6 ? (1 << attempt) : 60;
+      _reconnectAttempts[nodeIdHex] = attempt + 1;
+      _log('Reconnect $nodeIdHex in ${delaySec}s (attempt ${attempt + 1})');
+      Future<void>.delayed(Duration(seconds: delaySec), () {
         if (!_peers.containsKey(nodeIdHex) && !_connecting.contains(nodeIdHex)) {
           _connectToPeer(cached);
         }
@@ -341,6 +402,41 @@ class LanService {
     _beaconTimer = Timer.periodic(LanConstants.beaconInterval, (_) {
       _sendBeacon();
     });
+  }
+
+  /// LAN TCP Heartbeat — PING을 주기적으로 전송하고 무응답 피어를 제거한다.
+  void _startHeartbeat() {
+    final pingFrame = _buildFrame(Uint8List.fromList([_hbMagic, _hbPingByte]));
+
+    // PING 전송: 연결된 모든 피어에 주기적으로
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: _hbIntervalSec),
+      (_) {
+        for (final entry in Map<String, Socket>.from(_peers).entries) {
+          try {
+            entry.value.add(pingFrame);
+            unawaited(entry.value.flush().timeout(const Duration(seconds: 3)));
+            _log('[HB] PING → ${entry.key}');
+          } catch (_) {}
+        }
+      },
+    );
+
+    // Watchdog: 마지막 PONG으로부터 _hbTimeoutMs 초과 시 연결 해제
+    _heartbeatWatchdog = Timer.periodic(
+      const Duration(seconds: _hbIntervalSec),
+      (_) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final peerId in List<String>.from(_peers.keys)) {
+          final lastPong = _lastPongMs[peerId];
+          if (lastPong != null && now - lastPong > _hbTimeoutMs) {
+            _log('[HB] $peerId 응답 없음 (${now - lastPong}ms) → 연결 해제');
+            _peers[peerId]?.destroy();
+            _removePeer(peerId);
+          }
+        }
+      },
+    );
   }
 
   void _sendBeacon() {

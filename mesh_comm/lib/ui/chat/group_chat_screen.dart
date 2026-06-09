@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
 
 class GroupChatScreen extends StatefulWidget {
@@ -28,6 +31,7 @@ class _GroupChatMessage {
   final int timestamp;
   final bool isOutgoing;
   final String? status;
+  final bool isFile;
 
   const _GroupChatMessage({
     required this.text,
@@ -35,6 +39,7 @@ class _GroupChatMessage {
     required this.timestamp,
     required this.isOutgoing,
     this.status,
+    this.isFile = false,
   });
 }
 
@@ -47,6 +52,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   static const Color _textPrimary = Color(0xFFECECEC);
   static const Color _textSecondary = Color(0xFF9090A0);
 
+  // 드롭다운: chat_screen.dart와 동일 구조
+  static const _dropdownItems = [
+    ('일반', 'normal'),
+    ('타임', 'timed'),
+    ('파일', 'file'),
+    ('이미지', 'image'),
+  ];
+
   final _messages = <_GroupChatMessage>[];
   final _controller = TextEditingController();
   final _keyboardFocusNode = FocusNode();
@@ -56,6 +69,92 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   bool _isSending = false;
 
   int get _maxLength => _messageMode.maxLength;
+
+  String get _dropdownValue => switch (_messageMode) {
+    MessageSendMode.normal => 'normal',
+    MessageSendMode.timed => 'timed',
+    MessageSendMode.shortNotice => 'normal',
+    MessageSendMode.longNotice => 'normal',
+  };
+
+  void _onDropdownChanged(String? value) {
+    if (value == null || _isSending) return;
+    switch (value) {
+      case 'file':
+        _pickAndSendFile();
+      case 'image':
+        _pickAndSendImage();
+      case 'normal':
+        setState(() => _messageMode = MessageSendMode.normal);
+      case 'timed':
+        setState(() => _messageMode = MessageSendMode.timed);
+    }
+  }
+
+  Future<void> _pickAndSendFile() async {
+    const typeGroup = XTypeGroup(label: 'files');
+    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+    if (file == null || !mounted) return;
+    final data = Uint8List.fromList(await file.readAsBytes());
+    for (final member in widget.members) {
+      final hex = contactCode(member);
+      if (MessagingService().isDirectlyConnected(hex)) {
+        await MessagingService().sendFile(
+          data: data,
+          fileName: file.name,
+          mimeType: 'application/octet-stream',
+          targetNodeIdHex: hex,
+          kind: TransferKind.file,
+        );
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _messages.add(_GroupChatMessage(
+          text: file.name,
+          senderLabel: 'Me',
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          isOutgoing: true,
+          isFile: true,
+        ));
+      });
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    const imageTypes = XTypeGroup(
+      label: 'images',
+      extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    );
+    final file = await openFile(acceptedTypeGroups: [imageTypes]);
+    if (file == null || !mounted) return;
+    final data = Uint8List.fromList(await file.readAsBytes());
+    for (final member in widget.members) {
+      final hex = contactCode(member);
+      if (MessagingService().isDirectlyConnected(hex)) {
+        await MessagingService().sendFile(
+          data: data,
+          fileName: file.name,
+          mimeType: 'image/jpeg',
+          targetNodeIdHex: hex,
+          kind: TransferKind.image,
+        );
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _messages.add(_GroupChatMessage(
+          text: file.name,
+          senderLabel: 'Me',
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          isOutgoing: true,
+          isFile: true,
+        ));
+      });
+      _scrollToBottom();
+    }
+  }
 
   @override
   void initState() {
@@ -116,13 +215,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _controller.clear();
         _messages.add(
           _GroupChatMessage(
-            text: sentMode.isNotice ? '[${sentMode.label}] $text' : text,
+            text: text,
             senderLabel: 'Me',
             timestamp: DateTime.now().millisecondsSinceEpoch,
             isOutgoing: true,
-            status: sentMode.isNotice
-                ? '공지 전송'
-                : '${result.sent}/${result.attempted} 전송',
+            status: '${result.sent}/${result.attempted} 전송',
           ),
         );
       }
@@ -186,7 +283,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         children: [
           const CircleAvatar(
             backgroundColor: Color(0xFF2D2858),
-            child: Icon(Icons.groups_outlined, color: Color(0xFF8B7CF6)),
+            child: Icon(Icons.groups_outlined, color: Color(0xFFFF9800)),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -234,12 +331,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Widget _buildMessageItem(_GroupChatMessage message) {
     final isOutgoing = message.isOutgoing;
+
+    Widget innerContent;
+    if (message.isFile) {
+      innerContent = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.insert_drive_file_outlined, size: 18, color: _textPrimary),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              message.text,
+              style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+            ),
+          ),
+        ],
+      );
+    } else {
+      innerContent = Text(
+        message.text,
+        style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Column(
-        crossAxisAlignment: isOutgoing
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
+        crossAxisAlignment: isOutgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, right: 4, bottom: 2),
@@ -249,50 +367,41 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ),
           Row(
-            mainAxisAlignment: isOutgoing
-                ? MainAxisAlignment.end
-                : MainAxisAlignment.start,
+            mainAxisAlignment: isOutgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (!isOutgoing) const SizedBox(width: 4),
               Flexible(
                 child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.72,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
+                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: isOutgoing ? _outgoingBubble : _incomingBubble,
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: Radius.circular(isOutgoing ? 18 : 4),
+                      bottomRight: Radius.circular(isOutgoing ? 4 : 18),
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        message.text,
-                        style: const TextStyle(
-                          color: _textPrimary,
-                          fontSize: 15,
-                          height: 1.4,
-                        ),
-                      ),
+                      innerContent,
                       const SizedBox(height: 4),
                       Text(
                         [
                           _formatTime(message.timestamp),
                           if (message.status != null) message.status!,
                         ].join(' · '),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: _textPrimary.withAlpha(153),
-                        ),
+                        style: TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153)),
                       ),
                     ],
                   ),
                 ),
               ),
+              if (isOutgoing) const SizedBox(width: 4),
             ],
           ),
         ],
@@ -313,55 +422,41 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Container(
-              width: 92,
+              width: 80,
               margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 color: const Color(0xFF0F0F1E),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0xFF2A2A3E)),
               ),
               child: DropdownButtonHideUnderline(
-                child: DropdownButton<MessageSendMode>(
-                  value: _messageMode,
+                child: DropdownButton<String>(
+                  value: _dropdownValue,
                   isExpanded: true,
                   dropdownColor: _incomingBubble,
-                  selectedItemBuilder: (context) => MessageSendMode.values
-                      .map(
-                        (mode) => Align(
-                          alignment: Alignment.center,
-                          child: Text(
-                            _modeCompactLabel(mode),
-                            textAlign: TextAlign.center,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _textPrimary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  items: MessageSendMode.values
-                      .map(
-                        (mode) => DropdownMenuItem(
-                          value: mode,
-                          child: Center(
+                  selectedItemBuilder: (context) => _dropdownItems
+                      .map((item) => Align(
+                            alignment: Alignment.center,
                             child: Text(
-                              _modeCompactLabel(mode),
+                              item.$1,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(color: _textPrimary),
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: _textPrimary, fontSize: 12),
                             ),
-                          ),
-                        ),
-                      )
+                          ))
                       .toList(),
-                  onChanged: _isSending
-                      ? null
-                      : (mode) {
-                          if (mode == null) return;
-                          setState(() => _messageMode = mode);
-                        },
+                  items: _dropdownItems
+                      .map((item) => DropdownMenuItem(
+                            value: item.$2,
+                            child: Center(
+                              child: Text(item.$1,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: _textPrimary)),
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: _isSending ? null : _onDropdownChanged,
                 ),
               ),
             ),
@@ -401,6 +496,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         borderRadius: BorderRadius.circular(24),
                         borderSide: BorderSide.none,
                       ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: _outgoingBubble, width: 1.5),
+                      ),
                     ),
                   ),
                 ),
@@ -411,27 +510,25 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               valueListenable: _controller,
               builder: (context, value, _) {
                 final hasText = value.text.trim().isNotEmpty;
-                return IconButton(
-                  onPressed: hasText && !_isSending ? _sendMessage : null,
-                  style: IconButton.styleFrom(
-                    backgroundColor: hasText
-                        ? _outgoingBubble
-                        : const Color(0xFF2A2A3E),
-                    foregroundColor: _textPrimary,
-                    padding: const EdgeInsets.all(12),
-                    minimumSize: const Size(44, 44),
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  child: IconButton(
+                    onPressed: hasText && !_isSending ? _sendMessage : null,
+                    style: IconButton.styleFrom(
+                      backgroundColor: hasText ? _outgoingBubble : const Color(0xFF2A2A3E),
+                      foregroundColor: _textPrimary,
+                      padding: const EdgeInsets.all(12),
+                      minimumSize: const Size(44, 44),
+                    ),
+                    icon: _isSending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: _textPrimary),
+                          )
+                        : const Icon(Icons.send_rounded, size: 20),
+                    tooltip: '전송',
                   ),
-                  icon: _isSending
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _textPrimary,
-                          ),
-                        )
-                      : const Icon(Icons.send_rounded, size: 20),
-                  tooltip: '전송',
                 );
               },
             ),
@@ -439,15 +536,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ),
       ),
     );
-  }
-
-  String _modeCompactLabel(MessageSendMode mode) {
-    return switch (mode) {
-      MessageSendMode.normal => '일반',
-      MessageSendMode.timed => '타임',
-      MessageSendMode.shortNotice => '공지S',
-      MessageSendMode.longNotice => '공지L',
-    };
   }
 
   String _formatTime(int timestampMs) {

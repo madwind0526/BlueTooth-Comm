@@ -13,7 +13,10 @@ class LanConstants {
   static const String multicastGroup = '224.0.0.251';
 
   /// 비콘 전송 주기
-  static const Duration beaconInterval = Duration(seconds: 30);
+  static const Duration beaconInterval = Duration(seconds: 5);
+
+  /// TCP 끊김 후 재연결 대기 시간
+  static const Duration reconnectDelay = Duration(seconds: 3);
 
   /// 피어 응답 없을 시 연결 타임아웃
   static const Duration connectTimeout = Duration(seconds: 5);
