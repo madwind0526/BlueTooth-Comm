@@ -45,6 +45,10 @@ class TransferService {
   // 청크 ACK 대기 타이머 (tid → Timer)
   final Map<TransferId, Timer> _ackTimers = {};
 
+  // 수신 측 비활동 타임아웃 감시 타이머
+  Timer? _incomingWatchdog;
+  static const _incomingTimeout = Duration(seconds: 20);
+
   static const _ackTimeout = Duration(seconds: 15);
   static const _maxRetries = 3;
 
@@ -82,6 +86,22 @@ class TransferService {
 
   void init({required SendPacketFn sendPacket}) {
     _sendPacket = sendPacket;
+    _incomingWatchdog?.cancel();
+    _incomingWatchdog = Timer.periodic(const Duration(seconds: 5), (_) {
+      _checkIncomingTimeouts();
+    });
+  }
+
+  void _checkIncomingTimeouts() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final timedOut = _incoming.entries
+        .where((e) => now - e.value.lastActivityMs > _incomingTimeout.inMilliseconds)
+        .map((e) => e.key)
+        .toList();
+    for (final tid in timedOut) {
+      _log('incoming timeout — auto-cancel: ${tid.substring(0, 8)}');
+      cancelTransfer(tid);
+    }
   }
 
   /// 진행 중인 발신/수신 전송을 취소한다. [notify] 가 true면 상대방에게 fileCancel 패킷을 보낸다.
@@ -99,15 +119,20 @@ class TransferService {
     _log('cancelTransfer: $tid notify=$notify');
   }
 
-  /// 상대방에게 취소 패킷 전송 (fire-and-forget).
+  /// 상대방에게 취소 패킷 전송 — BLE 패킷 손실에 대비해 3회 재전송.
   void _sendCancelPacket(TransferId tid, String targetNodeIdHex) {
-    _buildPacket(
-      msgType: MsgType.fileCancel,
-      targetNodeIdHex: targetNodeIdHex,
-      payload: Uint8List.fromList(utf8.encode(tid)),
-    ).then((packet) => _sendPacket?.call(packet, targetNodeIdHex)).catchError(
-      (e) => _log('_sendCancelPacket error: $e'),
-    );
+    void send(int attempt) {
+      _buildPacket(
+        msgType: MsgType.fileCancel,
+        targetNodeIdHex: targetNodeIdHex,
+        payload: Uint8List.fromList(utf8.encode(tid)),
+      ).then((packet) => _sendPacket?.call(packet, targetNodeIdHex)).catchError(
+        (e) => _log('_sendCancelPacket[$attempt] error: $e'),
+      );
+    }
+    send(0);
+    Future.delayed(const Duration(milliseconds: 150), () => send(1));
+    Future.delayed(const Duration(milliseconds: 400), () => send(2));
   }
 
   /// 상대방이 보낸 fileCancel 패킷을 처리한다.
@@ -272,6 +297,7 @@ class TransferService {
       if (transfer == null) return;
 
       transfer.chunks[chunkIdx] = data;
+      transfer.lastActivityMs = DateTime.now().millisecondsSinceEpoch;
       _sendAck(tid, senderNodeIdHex, chunk: chunkIdx);
 
       _emit(TransferProgress(

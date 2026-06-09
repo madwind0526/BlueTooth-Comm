@@ -101,6 +101,7 @@ class IncomingTransfer {
   final Map<int, Uint8List> chunks = {};
 
   TransferStatus status = TransferStatus.waiting;
+  int lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 
   IncomingTransfer({required this.meta, required this.senderNodeIdHex});
 
@@ -128,7 +129,8 @@ sealed class TransferEvent {
 class TransferStarted extends TransferEvent {
   final TransferMeta meta;
   final TransferDirection direction;
-  const TransferStarted(super.tid, {required this.meta, required this.direction});
+  final String contactNodeIdHex;
+  const TransferStarted(super.tid, {required this.meta, required this.direction, required this.contactNodeIdHex});
 }
 
 class TransferProgress extends TransferEvent {

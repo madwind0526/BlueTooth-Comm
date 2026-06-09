@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/features/contacts/contact_model.dart';
@@ -151,7 +150,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.clear();
       }
       _messages.addAll(
-        history.map(
+        history.where((m) => !m.isNotice).map(
           (m) => _ChatMessage(
             text: m.text,
             timestamp: m.timestamp,
@@ -168,6 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _msgSubscription = MessagingService().messageStream
         .where(
           (m) =>
+              !m.isNotice &&
               m.senderNodeId.length == widget.contact.nodeId.length &&
               List.generate(
                 m.senderNodeId.length,
@@ -364,7 +364,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _controller.clear();
           _messages.add(
             _ChatMessage(
-              text: sentMode.isNotice ? '[${sentMode.label}] $text' : text,
+              text: text,
               timestamp: DateTime.now().millisecondsSinceEpoch,
               isOutgoing: true,
               isTrusted: widget.contact.isTrusted,
@@ -427,8 +427,6 @@ class _ChatScreenState extends State<ChatScreen> {
   static const _dropdownItems = [
     ('일반', 'normal'),
     ('타임', 'timed'),
-    ('공지S', 'noticeS'),
-    ('공지L', 'noticeL'),
     ('파일', 'file'),
     ('이미지', 'image'),
   ];
@@ -436,8 +434,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String get _dropdownValue => switch (_messageMode) {
     MessageSendMode.normal => 'normal',
     MessageSendMode.timed => 'timed',
-    MessageSendMode.shortNotice => 'noticeS',
-    MessageSendMode.longNotice => 'noticeL',
+    MessageSendMode.shortNotice => 'normal',
+    MessageSendMode.longNotice => 'normal',
   };
 
   void _onDropdownChanged(String? value) {
@@ -612,20 +610,30 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '$label: ${t.meta.fileName}',
-                        style: const TextStyle(
-                          color: Color(0xFF9E9EB8),
-                          fontSize: 11,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$label: ${t.meta.fileName}',
+                              style: const TextStyle(
+                                color: Color(0xFF9E9EB8),
+                                fontSize: 11,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (!isOut) ...[
+                            const SizedBox(width: 4),
+                            const _BlinkingDots(),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 2),
                       LinearProgressIndicator(
                         value: t.progress,
                         backgroundColor: const Color(0xFF2A2A3E),
                         color: isOut
-                            ? const Color(0xFF7C6AF7)
+                            ? const Color(0xFFFF9800)
                             : const Color(0xFF4ADE80),
                         minHeight: 3,
                       ),
@@ -903,8 +911,8 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       String savedPath;
       if (Platform.isAndroid) {
-        // Android: Downloads 폴더에 직접 저장
-        final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+        // Android: Documents/Mesh-comm/Downloads/ 에 저장
+        final dir = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
         final destFile = File('${dir.path}/${file.meta.fileName}');
         await destFile.writeAsBytes(file.data!);
         savedPath = destFile.path;
@@ -1130,4 +1138,58 @@ class _CompletedFile {
     required this.direction,
     required this.timestamp,
   });
+}
+
+class _BlinkingDots extends StatefulWidget {
+  const _BlinkingDots();
+
+  @override
+  State<_BlinkingDots> createState() => _BlinkingDotsState();
+}
+
+class _BlinkingDotsState extends State<_BlinkingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        final t = _ctrl.value;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final phase = ((t * 3 - i) % 1.0).clamp(0.0, 1.0);
+            final opacity = 0.25 + phase * 0.75;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1.5),
+              child: Opacity(
+                opacity: opacity,
+                child: const Text(
+                  '●',
+                  style: TextStyle(color: Colors.white, fontSize: 7),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
 }

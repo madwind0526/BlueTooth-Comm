@@ -29,6 +29,7 @@ import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/avatar/avatar_registry.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
 import 'package:mesh_comm/ui/chat/chat_screen.dart';
 import 'package:mesh_comm/ui/chat/group_chat_screen.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
@@ -1460,8 +1461,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<String?> _saveJsonFile(String json, String filename) async {
     try {
+      final meshDir = await TransferStorageService.meshCommPublicDir();
       final location = await getSaveLocation(
         suggestedName: filename,
+        initialDirectory: meshDir.path,
         acceptedTypeGroups: const [
           XTypeGroup(label: 'JSON', extensions: ['json']),
         ],
@@ -1470,7 +1473,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await File(location.path).writeAsString(json);
       return location.path;
     } catch (_) {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await TransferStorageService.meshCommPublicDir();
       final file = File(p.join(dir.path, filename));
       await file.writeAsString(json);
       return file.path;
@@ -1486,7 +1489,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (type == null) return;
 
     try {
-      final file = await openFile();
+      final meshDir = await TransferStorageService.meshCommPublicDir();
+      final file = await openFile(initialDirectory: meshDir.path);
       if (file == null) return;
       final rawJson = await file.readAsString();
 
@@ -1543,8 +1547,10 @@ class _HomeScreenState extends State<HomeScreen> {
       String savedPath;
 
       try {
+        final meshDir = await TransferStorageService.meshCommPublicDir();
         final location = await getSaveLocation(
           suggestedName: filename,
+          initialDirectory: meshDir.path,
           acceptedTypeGroups: const [
             XTypeGroup(
               label: 'Encrypted MeshComm identity',
@@ -1556,7 +1562,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await File(location.path).writeAsString(json);
         savedPath = location.path;
       } catch (_) {
-        final dir = await getApplicationDocumentsDirectory();
+        final dir = await TransferStorageService.meshCommPublicDir();
         final file = File(p.join(dir.path, filename));
         await file.writeAsString(json);
         savedPath = file.path;
@@ -1625,7 +1631,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final rawJson = useAutoFile == true
           ? await autoFile.readAsString()
           : await (() async {
+              final meshDir = await TransferStorageService.meshCommPublicDir();
               final file = await openFile(
+                initialDirectory: meshDir.path,
                 acceptedTypeGroups: const [
                   XTypeGroup(
                     label: 'Encrypted MeshComm identity',
@@ -1916,7 +1924,6 @@ class _HomeScreenState extends State<HomeScreen> {
           onSelected: (filter) => setState(() => _filter = filter),
           onImport: _importContacts,
           onExport: _exportContacts,
-          onSendNotice: () => _showNoticeDialog(context),
         ),
         const VerticalDivider(width: 1),
         Expanded(child: _buildFilteredList()),
@@ -1928,7 +1935,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final selfContact = _selfContact();
     final savedContacts = _savedContactsExcludingSelf();
     if (_filter == HomeFilter.notices) {
-      return _NoticeBoardView(notices: _notices);
+      return _NoticePanel(
+        notices: _notices,
+        onSendNotice: () => _showNoticeDialog(context),
+      );
     }
     if (_filter == HomeFilter.groups) {
       return _GroupList(
@@ -2276,14 +2286,12 @@ class _FilterRail extends StatelessWidget {
   final ValueChanged<HomeFilter> onSelected;
   final VoidCallback onImport;
   final VoidCallback onExport;
-  final VoidCallback? onSendNotice;
 
   const _FilterRail({
     required this.selected,
     required this.onSelected,
     required this.onImport,
     required this.onExport,
-    this.onSendNotice,
   });
 
   @override
@@ -2299,13 +2307,6 @@ class _FilterRail extends StatelessWidget {
             selected: selected == HomeFilter.notices,
             onPressed: () => onSelected(HomeFilter.notices),
           ),
-          if (selected == HomeFilter.notices && onSendNotice != null)
-            _FilterButton(
-              icon: Icons.add_alert_outlined,
-              label: '보내기',
-              selected: false,
-              onPressed: onSendNotice!,
-            ),
           _FilterButton(
             icon: Icons.people_outline,
             label: 'All',
@@ -2352,6 +2353,36 @@ class _FilterRail extends StatelessWidget {
           const SizedBox(height: 8),
         ],
       ),
+    );
+  }
+}
+
+// 공지 보내기 버튼이 포함된 공지 패널
+class _NoticePanel extends StatelessWidget {
+  final List<_NoticeEntry> notices;
+  final VoidCallback onSendNotice;
+  const _NoticePanel({required this.notices, required this.onSendNotice});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(child: _NoticeBoardView(notices: notices)),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: Colors.white12)),
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onSendNotice,
+              icon: const Icon(Icons.add_alert_outlined, size: 18),
+              label: const Text('공지 보내기'),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -5377,7 +5408,7 @@ class _NoticeSendDialogState extends State<_NoticeSendDialog> {
     }
   }
 
-  String _cooldownInfo(MessageSendMode mode) {
+  String _cooldownStr(MessageSendMode mode) {
     final settings = AppSettingsService().current;
     final cooldown = settings.userLevel.noticeCooldown(mode);
     if (cooldown == null) return '';
@@ -5390,59 +5421,151 @@ class _NoticeSendDialogState extends State<_NoticeSendDialog> {
     if (remaining <= 0) return '';
     final hours = remaining ~/ 3600000;
     final minutes = (remaining % 3600000) ~/ 60000;
-    final hh = hours.toString().padLeft(2, '0');
-    final mm = minutes.toString().padLeft(2, '0');
-    return '재사용 $hh:$mm 후';
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final cooldown = _cooldownInfo(_mode);
-    return AlertDialog(
-      title: const Text('공지 전송'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButton<MessageSendMode>(
-            value: _mode,
-            isExpanded: true,
-            items: const [
-              DropdownMenuItem(value: MessageSendMode.shortNotice, child: Text('공지S (단기)')),
-              DropdownMenuItem(value: MessageSendMode.longNotice, child: Text('공지L (장기)')),
-            ],
-            onChanged: (mode) {
-              if (mode != null) setState(() => _mode = mode);
-            },
-          ),
-          if (cooldown.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(cooldown, style: const TextStyle(color: Colors.orange, fontSize: 12)),
-          ],
-          const SizedBox(height: 12),
-          TextField(
-            controller: _controller,
-            autofocus: true,
-            maxLength: _mode.maxLength,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: '공지 내용',
-              border: OutlineInputBorder(),
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A2E).withAlpha(235),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white12),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '공지 보내기',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _NoticeModeCard(
+                    label: '공지S',
+                    description: '연락처 전송',
+                    cooldown: _cooldownStr(MessageSendMode.shortNotice),
+                    selected: _mode == MessageSendMode.shortNotice,
+                    onTap: () => setState(() => _mode = MessageSendMode.shortNotice),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _NoticeModeCard(
+                    label: '공지L',
+                    description: '전체 mesh 전송',
+                    cooldown: _cooldownStr(MessageSendMode.longNotice),
+                    selected: _mode == MessageSendMode.longNotice,
+                    onTap: () => setState(() => _mode = MessageSendMode.longNotice),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              maxLength: 50,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: '공지 내용 입력',
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white10,
+                counterStyle: TextStyle(color: Colors.white54),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _sending ? null : _send,
+                  child: _sending
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('전송'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('취소'),
+    );
+  }
+}
+
+// ── 공지 모드 선택 카드 ──────────────────────────────────────────────────────────
+class _NoticeModeCard extends StatelessWidget {
+  final String label;
+  final String description;
+  final String cooldown;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _NoticeModeCard({
+    required this.label,
+    required this.description,
+    required this.cooldown,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF7C6AF7).withAlpha(50)
+              : Colors.white.withAlpha(13),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? const Color(0xFF7C6AF7) : Colors.white24,
+            width: selected ? 1.5 : 1,
+          ),
         ),
-        FilledButton(
-          onPressed: _sending ? null : _send,
-          child: _sending
-              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('전송'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: selected ? const Color(0xFF7C6AF7) : Colors.white,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 11, color: Colors.white60),
+            ),
+            if (cooldown.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                cooldown,
+                style: const TextStyle(color: Color(0xFFFF9800), fontSize: 11),
+              ),
+            ],
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -5484,7 +5607,7 @@ class _BlinkingDotState extends State<_BlinkingDot>
         '●',
         style: TextStyle(
           color: Theme.of(context).colorScheme.primary,
-          fontSize: 9,
+          fontSize: 18,
         ),
       ),
     );
