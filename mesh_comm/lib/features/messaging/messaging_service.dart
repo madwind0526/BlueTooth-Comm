@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:mesh_comm/core/ble/ble_service.dart';
 import 'package:mesh_comm/core/crypto/crypto_service.dart';
 import 'package:mesh_comm/core/diagnostics/diagnostic_config.dart';
@@ -48,6 +49,9 @@ class ReceivedMessage {
   /// 채팅 화면에 표시된 뒤 이 시간 후 삭제된다. null이면 자동 삭제 없음.
   final int? readTtlMs;
 
+  /// 공지 메시지 여부 (shortNotice 또는 longNotice).
+  final bool isNotice;
+
   const ReceivedMessage({
     required this.msgId,
     required this.senderNodeId,
@@ -56,6 +60,7 @@ class ReceivedMessage {
     required this.isTrusted,
     this.isOutgoing = false,
     this.readTtlMs,
+    this.isNotice = false,
   });
 
   @override
@@ -111,8 +116,9 @@ class GroupSendResult {
 class _DecodedTextPayload {
   final String text;
   final int? ttlMs;
+  final bool isNotice;
 
-  const _DecodedTextPayload({required this.text, this.ttlMs});
+  const _DecodedTextPayload({required this.text, this.ttlMs, this.isNotice = false});
 }
 
 class MessagingService {
@@ -136,11 +142,13 @@ class MessagingService {
   // KEY_ANNOUNCE 재전송 타이머 (R-10: 5분 주기)
   Timer? _keyAnnounceTimer;
   Timer? _connectionAnnounceTimer;
+  Timer? _lanKeepaliveTimer;
   final Set<String> _keyAnnounceRespondedNodeIds = {};
   final Map<String, int> _topologyRequestsHandledAt = {};
   StreamSubscription<List<String>>? _connectionSubscription;
   StreamSubscription<List<String>>? _lanConnectionSubscription;
   Set<String> _knownBleDeviceIds = {};
+  Set<String> _knownLanPeerIds = {};
 
   // BLE deviceId → nodeId hex (직접 연결된 이웃 추적)
   final Map<String, String> _deviceToNodeHex = {};
@@ -231,10 +239,30 @@ class MessagingService {
     await _lan.init(
       myNodeId: _identity.myNodeId,
       onPacketReceived: (packet, peerId) {
-        handleIncomingPacket(packet, peerId);
+        handleIncomingPacket(packet, peerId).catchError(
+          (Object e, StackTrace st) {
+            debugPrint('[LAN] handleIncomingPacket error: $e\n$st');
+          },
+        );
       },
     );
-    _lanConnectionSubscription = _lan.connectedPeersStream.listen((_) {});
+    _lanConnectionSubscription = _lan.connectedPeersStream.listen((peerIds) {
+      final current = peerIds.toSet();
+      final hasNew = current.difference(_knownLanPeerIds).isNotEmpty;
+      _knownLanPeerIds = current;
+      if (hasNew) {
+        // 새 LAN 피어가 연결되면 즉시 키를 알린다.
+        // 수신 측에서 아직 등록하지 않은 소켓을 첫 패킷으로 깨운다.
+        unawaited(broadcastKeyAnnounce());
+      }
+    });
+
+    // LAN TCP 연결 keepalive (30초마다 keyAnnounce 전송)
+    _lanKeepaliveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_lan.connectedCount > 0) {
+        unawaited(broadcastKeyAnnounce());
+      }
+    });
 
     // TransferService 초기화
     _transfer.init(sendPacket: _sendPacketToNodeId);
@@ -325,11 +353,11 @@ class MessagingService {
       if (trimmedText.isEmpty || trimmedText.length > mode.maxLength) {
         return false;
       }
-      if (_bytesEqual(targetNodeId, _identity.myNodeId)) {
-        return _sendSelfTextMessage(text: trimmedText, mode: mode);
-      }
       if (mode.isNotice) {
         return _sendNoticeMessage(text: trimmedText, mode: mode);
+      }
+      if (_bytesEqual(targetNodeId, _identity.myNodeId)) {
+        return _sendSelfTextMessage(text: trimmedText, mode: mode);
       }
 
       // 1. 최종 수신자와만 공유하는 X25519 비밀키로 payload 암호화.
@@ -881,13 +909,18 @@ class MessagingService {
         if (faForMe) {
           _transfer.handleFileAck(packet, _hex(packet.senderId));
         }
+      case MsgType.fileCancel:
+        if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
+          _transfer.handleFileCancel(packet);
+        }
     }
 
     // ── Step 5: TTL 체크 및 릴레이 ───────────────────────────────────────────
     // 파일 패킷은 직접 연결 전용 — relay하지 않는다.
     if (packet.msgType == MsgType.fileHeader ||
         packet.msgType == MsgType.fileChunk ||
-        packet.msgType == MsgType.fileAck) {
+        packet.msgType == MsgType.fileAck ||
+        packet.msgType == MsgType.fileCancel) {
       return;
     }
 
@@ -1006,6 +1039,7 @@ class MessagingService {
       timestamp: packet.timestamp,
       isTrusted: isTrusted,
       readTtlMs: decodedPayload.ttlMs,
+      isNotice: decodedPayload.isNotice,
     );
 
     if (!_messageStreamController.isClosed) {
@@ -1228,7 +1262,7 @@ class MessagingService {
       if (_bytesEqual(contact.nodeId, _identity.myNodeId)) continue;
       if (!contact.isSaved && contact.lastSeen < recentCutoff) continue;
       summaries.add(TopologyNodeSummary.fromContact(contact));
-      if (summaries.length >= 40) break;
+      if (summaries.length >= 15) break;
     }
     return summaries;
   }
@@ -1254,12 +1288,8 @@ class MessagingService {
       );
       pong.signature = signature;
 
-      // fromDeviceId로 직접 전송
-      final sent = await _ble.sendPacket(pong, fromDeviceId);
-      if (!sent) {
-        // 직접 연결이 없으면 브로드캐스트로 fallback
-        await _ble.broadcastPacket(pong);
-      }
+      // LAN 우선, 없으면 BLE로 직접 전송
+      await _sendPacketToNodeId(pong, _hex(packet.senderId));
 
       _log('PONG 전송: target=${_hexShort(packet.senderId)}');
     } catch (e) {
@@ -1352,6 +1382,8 @@ class MessagingService {
     _keyAnnounceTimer = null;
     _connectionAnnounceTimer?.cancel();
     _connectionAnnounceTimer = null;
+    _lanKeepaliveTimer?.cancel();
+    _lanKeepaliveTimer = null;
     await _connectionSubscription?.cancel();
     _connectionSubscription = null;
     await _lanConnectionSubscription?.cancel();
@@ -1417,9 +1449,11 @@ class MessagingService {
       }
       final text = decoded['text'];
       final ttlMs = decoded['readTtlMs'] ?? decoded['ttlMs'];
+      final kind = decoded['kind'] as String?;
       return _DecodedTextPayload(
         text: text is String ? text : raw,
         ttlMs: ttlMs is int ? ttlMs : null,
+        isNotice: kind == 'notice_s' || kind == 'notice_l',
       );
     } catch (_) {
       return _DecodedTextPayload(text: raw);

@@ -47,17 +47,14 @@ class _QrScreenState extends State<QrScreen>
 
   @override
   Widget build(BuildContext context) {
+    const accent = Color(0xFFFF9800);
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1E1E1E),
-        foregroundColor: Colors.white,
         title: const Text('QR 코드'),
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: const Color(0xFF7C6AF7),
-          labelColor: const Color(0xFF7C6AF7),
-          unselectedLabelColor: Colors.white54,
+          indicatorColor: accent,
+          labelColor: accent,
           tabs: const [
             Tab(text: '내 QR'),
             Tab(text: 'QR 스캔'),
@@ -85,9 +82,7 @@ class _MyQrTab extends StatelessWidget {
 
     // IdentityService가 초기화되지 않은 경우 방어
     if (!identity.isInitialized) {
-      return const Center(
-        child: Text('신원 초기화 중...', style: TextStyle(color: Colors.white54)),
-      );
+      return const Center(child: Text('신원 초기화 중...'));
     }
 
     final qrData = identity.getQrData();
@@ -106,7 +101,7 @@ class _MyQrTab extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF7C6AF7).withValues(alpha: 0.3),
+                    color: const Color(0xFFFF9800).withValues(alpha: 0.3),
                     blurRadius: 24,
                     spreadRadius: 2,
                   ),
@@ -135,7 +130,7 @@ class _MyQrTab extends StatelessWidget {
           Text(
             '내 핑거프린트',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
               fontSize: 12,
               letterSpacing: 1.2,
             ),
@@ -144,20 +139,20 @@ class _MyQrTab extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFF2A2A2A),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: const Color(0xFF7C6AF7).withValues(alpha: 0.4),
+                color: const Color(0xFFFF9800).withValues(alpha: 0.4),
               ),
             ),
             child: Text(
               fingerprint,
-              style: const TextStyle(
-                color: Color(0xFF7C6AF7),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 2,
-                fontFeatures: [FontFeature.tabularFigures()],
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -168,17 +163,22 @@ class _MyQrTab extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E1E1E),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.white38, size: 18),
-                SizedBox(width: 10),
+                Icon(Icons.info_outline,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.38),
+                    size: 18),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     '상대방이 이 QR을 스캔하면 연락처에 추가됩니다',
-                    style: TextStyle(color: Colors.white54, fontSize: 13),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.54),
+                      fontSize: 13,
+                    ),
                   ),
                 ),
               ],
@@ -319,10 +319,7 @@ class _ScanQrTabState extends State<_ScanQrTab> with WidgetsBindingObserver {
   void _showInfo(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: const Color(0xFF1E1E1E),
-      ),
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -388,7 +385,7 @@ class _ScanOverlay extends StatelessWidget {
                   border: Border.all(
                     color: scanned
                         ? const Color(0xFF4ADE80)
-                        : const Color(0xFF7C6AF7),
+                        : const Color(0xFFFF9800),
                     width: 2.5,
                   ),
                   borderRadius: BorderRadius.circular(12),
@@ -426,59 +423,54 @@ class _FingerprintDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return AlertDialog(
-      backgroundColor: const Color(0xFF1E1E1E),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text(
-        '핑거프린트 확인',
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-      ),
+      title: const Text('핑거프린트 확인', style: TextStyle(fontWeight: FontWeight.bold)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '상대방 화면의 코드와 일치하나요?',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
+            style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7), fontSize: 14),
           ),
           const SizedBox(height: 16),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFF2A2A2A),
+              color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: const Color(0xFF7C6AF7).withValues(alpha: 0.4),
-              ),
+              border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.4)),
             ),
             child: Text(
               fingerprint,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF7C6AF7),
+              style: TextStyle(
+                color: cs.onSurface,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 2,
-                fontFeatures: [FontFeature.tabularFigures()],
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '일치하면 신뢰 연락처로, 건너뛰면 미확인으로 저장됩니다.',
-            style: TextStyle(color: Colors.white38, fontSize: 12),
+            style: TextStyle(color: cs.onSurface.withValues(alpha: 0.38), fontSize: 12),
           ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('건너뜀', style: TextStyle(color: Colors.white54)),
+          child: const Text('건너뜀'),
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF7C6AF7),
+            backgroundColor: const Color(0xFFFF9800),
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),

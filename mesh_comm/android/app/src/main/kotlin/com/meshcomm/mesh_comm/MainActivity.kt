@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -16,9 +17,11 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val alertChannelName = "mesh_comm/alerts"
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        acquireMulticastLock()
 
         val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -43,6 +46,27 @@ class MainActivity : FlutterActivity() {
         if (missingPermissions.isNotEmpty()) {
             requestPermissions(missingPermissions.toTypedArray(), 1001)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (multicastLock?.isHeld == false) acquireMulticastLock()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releaseMulticastLock()
+    }
+
+    private fun acquireMulticastLock() {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        multicastLock = wifi.createMulticastLock("MeshCommMulticast")
+        multicastLock!!.setReferenceCounted(false)
+        multicastLock!!.acquire()
+    }
+
+    private fun releaseMulticastLock() {
+        if (multicastLock?.isHeld == true) multicastLock!!.release()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

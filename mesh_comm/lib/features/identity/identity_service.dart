@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:mesh_comm/core/crypto/crypto_service.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
 import 'package:mesh_comm/core/packet/mesh_packet.dart';
@@ -33,6 +34,11 @@ class IdentityService {
   // ── 의존성 ──────────────────────────────────────────────────────────────
   final _crypto = CryptoService();
   final _db = DatabaseService();
+  static const _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static const _keySigningSeed     = 'mesh_comm_signing_key';
+  static const _keyEncryptionSeed  = 'mesh_comm_encryption_key';
 
   // ── 내부 상태 ────────────────────────────────────────────────────────────
   bool _initialized = false;
@@ -55,61 +61,82 @@ class IdentityService {
   Future<void> init() async {
     if (_initialized) return;
 
+    // ── 1단계: secure storage에서 개인키 seed 로드 시도 ──────────────────────
+    final signingHex    = await _secureStorage.read(key: _keySigningSeed);
+    final encryptionHex = await _secureStorage.read(key: _keyEncryptionSeed);
+
     final saved = await _db.getIdentity();
 
-    if (saved == null) {
-      // 최초 설치 — 새 키쌍 생성
-      final keyPair = await _crypto.generateKeyPair();
-      final encryptionKeyPair = await _crypto.generateEncryptionKeyPair();
-      final nodeId = _crypto.nodeIdFromPublicKey(keyPair.publicKey);
+    if (signingHex != null && encryptionHex != null && saved != null) {
+      // ── 정상 경로: secure storage + DB 공개키 모두 존재 ────────────────────
+      _nodeId              = saved['node_id']              as Uint8List;
+      _publicKey           = saved['public_key']           as Uint8List;
+      _encryptionPublicKey = saved['encryption_public_key'] as Uint8List?;
+      _privateKey          = _fromHex(signingHex);
+      _encryptionPrivateKey = _fromHex(encryptionHex);
 
-      // TODO: seed 저장 전 암호화 적용 (현재 평문 저장 — Phase 2에서 개선)
+      // encryption 공개키 누락 시 DB에서 복원 (구형 DB 호환)
+      if (_encryptionPublicKey == null) {
+        final kp = await _crypto.generateEncryptionKeyPair();
+        await _db.updateIdentityEncryptionKeys(kp.publicKey, kp.privateKey);
+        _encryptionPublicKey = kp.publicKey;
+        // 개인키는 이미 secure storage에 있으므로 덮어쓰지 않음
+      }
+    } else if (saved != null) {
+      // ── 마이그레이션 경로: 기존 DB 평문 저장 → secure storage로 이전 ────────
+      final dbPrivate    = saved['private_key']            as Uint8List;
+      final dbEncPrivate = saved['encryption_private_key'] as Uint8List?;
+
+      _nodeId              = saved['node_id']              as Uint8List;
+      _publicKey           = saved['public_key']           as Uint8List;
+      _encryptionPublicKey = saved['encryption_public_key'] as Uint8List?;
+      _privateKey          = dbPrivate;
+
+      // X25519 개인키가 DB에 없으면 새로 생성
+      if (dbEncPrivate == null || _isZeroBytes(dbEncPrivate)) {
+        final kp = await _crypto.generateEncryptionKeyPair();
+        _encryptionPublicKey = kp.publicKey;
+        _encryptionPrivateKey = kp.privateKey;
+        await _db.updateIdentityEncryptionKeys(kp.publicKey, kp.privateKey);
+      } else {
+        _encryptionPrivateKey = dbEncPrivate;
+      }
+
+      // secure storage에 저장 후 DB 개인키 0으로 덮어쓰기
+      if (!_isZeroBytes(dbPrivate)) {
+        await _secureStorage.write(key: _keySigningSeed,    value: _toHex(_privateKey!));
+        await _secureStorage.write(key: _keyEncryptionSeed, value: _toHex(_encryptionPrivateKey!));
+        await _db.clearPrivateKeys();
+      }
+    } else {
+      // ── 최초 설치: 새 키쌍 생성 ──────────────────────────────────────────
+      final keyPair           = await _crypto.generateKeyPair();
+      final encryptionKeyPair = await _crypto.generateEncryptionKeyPair();
+      final nodeId            = _crypto.nodeIdFromPublicKey(keyPair.publicKey);
+
+      // 공개키·node_id만 DB에 저장, 개인키는 secure storage에 저장
+      final zeros32 = Uint8List(32);
       await _db.saveIdentity(
         nodeId,
         keyPair.publicKey,
-        keyPair.privateKey,
+        zeros32,                      // DB에는 zeros — 개인키는 secure storage에
         encryptionKeyPair.publicKey,
-        encryptionKeyPair.privateKey,
+        zeros32,
       );
+      await _secureStorage.write(key: _keySigningSeed,    value: _toHex(keyPair.privateKey));
+      await _secureStorage.write(key: _keyEncryptionSeed, value: _toHex(encryptionKeyPair.privateKey));
 
-      _nodeId = nodeId;
-      _publicKey = keyPair.publicKey;
-      _privateKey = keyPair.privateKey;
-      _encryptionPublicKey = encryptionKeyPair.publicKey;
+      _nodeId               = nodeId;
+      _publicKey            = keyPair.publicKey;
+      _privateKey           = keyPair.privateKey;
+      _encryptionPublicKey  = encryptionKeyPair.publicKey;
       _encryptionPrivateKey = encryptionKeyPair.privateKey;
-    } else {
-      // 기존 신원 복원
-      final seed = saved['private_key'] as Uint8List;
-      final storedPublicKey = saved['public_key'] as Uint8List;
-      final storedNodeId = saved['node_id'] as Uint8List;
-
-      // seed에서 키쌍을 복원하여 개인키를 메모리에만 보관 (PATTERNS.md: Ed25519 키 복원)
-      // public key는 DB 저장값을 그대로 사용 (결정적 생성이므로 일치함)
-      _nodeId = storedNodeId;
-      _publicKey = storedPublicKey;
-      _privateKey = seed;
-
-      final storedEncryptionPublicKey =
-          saved['encryption_public_key'] as Uint8List?;
-      final storedEncryptionPrivateKey =
-          saved['encryption_private_key'] as Uint8List?;
-      if (storedEncryptionPublicKey == null ||
-          storedEncryptionPrivateKey == null) {
-        final encryptionKeyPair = await _crypto.generateEncryptionKeyPair();
-        await _db.updateIdentityEncryptionKeys(
-          encryptionKeyPair.publicKey,
-          encryptionKeyPair.privateKey,
-        );
-        _encryptionPublicKey = encryptionKeyPair.publicKey;
-        _encryptionPrivateKey = encryptionKeyPair.privateKey;
-      } else {
-        _encryptionPublicKey = storedEncryptionPublicKey;
-        _encryptionPrivateKey = storedEncryptionPrivateKey;
-      }
     }
 
     _initialized = true;
   }
+
+  static bool _isZeroBytes(Uint8List bytes) => bytes.every((b) => b == 0);
 
   // ── Getters ──────────────────────────────────────────────────────────────
 
@@ -134,7 +161,7 @@ class IdentityService {
 
   /// 이 기기의 Ed25519 개인키 seed (32 bytes, 메모리에만 존재).
   ///
-  /// DB에는 seed만 저장된다 (TODO: 암호화 저장으로 교체 필요).
+  /// 개인키는 flutter_secure_storage (Android Keystore / Windows DPAPI)에 저장된다.
   /// [init] 호출 전이면 StateError를 던진다.
   Uint8List get myPrivateKeySeed {
     _assertInitialized();

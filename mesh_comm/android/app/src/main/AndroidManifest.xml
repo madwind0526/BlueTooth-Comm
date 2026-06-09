@@ -29,6 +29,10 @@
     <!-- 카메라 (QR 스캔) -->
     <uses-permission android:name="android.permission.CAMERA"/>
 
+    <!-- 파일/이미지 Downloads 저장 (Android 9 이하) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+
     <!-- BLE 기능 선언 -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
 

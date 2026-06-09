@@ -15,15 +15,28 @@ import 'package:mesh_comm/features/settings/app_settings.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/ui/home/home_screen.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  if (Platform.isWindows || Platform.isLinux) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  }
+      FlutterError.onError = (details) {
+        debugPrint(
+          '[Flutter] onError: ${details.exception}\n${details.stack}',
+        );
+      };
 
-  runApp(const MeshCommApp());
+      if (Platform.isWindows || Platform.isLinux) {
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+      }
+
+      runApp(const MeshCommApp());
+    },
+    (e, st) {
+      debugPrint('[Zone] Uncaught error: $e\n$st');
+    },
+  );
 }
 
 class MeshCommApp extends StatefulWidget {
@@ -83,7 +96,11 @@ class _MeshCommAppState extends State<MeshCommApp> {
       await BleService().init(
         myNodeId: IdentityService().myNodeId,
         onPacketReceived: (packet, deviceId) {
-          MessagingService().handleIncomingPacket(packet, deviceId);
+          MessagingService()
+              .handleIncomingPacket(packet, deviceId)
+              .catchError((Object e, StackTrace st) {
+            debugPrint('[BLE] handleIncomingPacket error: $e\n$st');
+          });
         },
       );
 

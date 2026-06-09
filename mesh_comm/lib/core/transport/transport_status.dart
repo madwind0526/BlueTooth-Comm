@@ -1,5 +1,5 @@
 enum TransportKind {
-  lan('LAN'),
+  lan('WiFi'),
   bluetooth('BLE');
 
   final String label;

@@ -64,16 +64,8 @@ enum UserLevel {
 
   Duration? noticeCooldown(MessageSendMode mode) {
     if (!mode.isNotice) return Duration.zero;
-    if (this == UserLevel.creator) return Duration.zero;
-
-    final shortNotice = mode == MessageSendMode.shortNotice;
-    return switch (this) {
-      UserLevel.builder => Duration(hours: shortNotice ? 1 : 2),
-      UserLevel.admin => Duration(hours: shortNotice ? 2 : 4),
-      UserLevel.user => Duration(hours: shortNotice ? 6 : 24),
-      UserLevel.server => null,
-      UserLevel.creator => Duration.zero,
-    };
+    if (this == UserLevel.server) return null;
+    return Duration.zero; // 평가 중 쿨다운 임시 해제
   }
 
   List<UserLevel> get contactAssignableLevels {

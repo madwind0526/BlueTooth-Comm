@@ -36,7 +36,10 @@ enum MsgType {
   fileChunk(0x0A),
 
   /// 파일/이미지 청크 수신 확인 (전송 ID + 청크 인덱스 + 성공 여부).
-  fileAck(0x0B);
+  fileAck(0x0B),
+
+  /// 파일 전송 취소 (전송 ID). 송신·수신 양쪽 모두 보낼 수 있다.
+  fileCancel(0x0C);
 
   final int value;
   const MsgType(this.value);

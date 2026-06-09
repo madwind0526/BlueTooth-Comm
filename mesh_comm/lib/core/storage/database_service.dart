@@ -19,7 +19,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   static const String _dbFileName = 'mesh_comm.db';
-  static const int _dbVersion = 8;
+  static const int _dbVersion = 9;
 
   Database? _db;
 
@@ -115,10 +115,19 @@ class DatabaseService {
       'CREATE INDEX idx_messages_expires_at ON messages (expires_at)',
     );
 
-    // seen_messages 만료 조회 성능을 위한 인덱스
     await db.execute(
       'CREATE INDEX idx_seen_messages_seen_at ON seen_messages (seen_at)',
     );
+
+    await db.execute('''
+      CREATE TABLE notices (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_name TEXT    NOT NULL,
+        text        TEXT    NOT NULL,
+        timestamp   INTEGER NOT NULL,
+        is_long     INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -175,6 +184,17 @@ class DatabaseService {
         "ALTER TABLE contacts ADD COLUMN user_level TEXT NOT NULL DEFAULT 'user'",
       );
     }
+    if (oldVersion < 9) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS notices (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          sender_name TEXT    NOT NULL,
+          text        TEXT    NOT NULL,
+          timestamp   INTEGER NOT NULL,
+          is_long     INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+    }
   }
 
   // ── Identity ─────────────────────────────────────────────────────────────
@@ -207,6 +227,15 @@ class DatabaseService {
     await _database.update('identity', {
       'encryption_public_key': encryptionPublicKey,
       'encryption_private_key': encryptionPrivateKey,
+    }, where: 'id = 1');
+  }
+
+  /// DB의 개인키 seed를 0으로 덮어쓴다 (secure storage 마이그레이션 후 호출).
+  Future<void> clearPrivateKeys() async {
+    final zeros32 = Uint8List(32);
+    await _database.update('identity', {
+      'private_key': zeros32,
+      'encryption_private_key': zeros32,
     }, where: 'id = 1');
   }
 
@@ -528,6 +557,7 @@ class DatabaseService {
               WHERE (
                   (sender_id = ? AND target_id = ?)
                   OR (sender_id = ? AND target_id = ?)
+                  OR (sender_id = ? AND target_id = X'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF')
                 )
                 AND (expires_at IS NULL OR expires_at > ?)
               ORDER BY timestamp ASC
@@ -535,7 +565,7 @@ class DatabaseService {
               ''',
         isSelf
             ? [myNodeId, myNodeId, nowMs, limit]
-            : [contactNodeId, myNodeId, myNodeId, contactNodeId, nowMs, limit],
+            : [contactNodeId, myNodeId, myNodeId, contactNodeId, contactNodeId, nowMs, limit],
       );
       return rows.map(_blobRow).toList();
     }
@@ -672,6 +702,26 @@ class DatabaseService {
         LIMIT 10000
       )
     ''');
+  }
+
+  // ── Notices ───────────────────────────────────────────────────────────────
+
+  Future<void> saveNotice({
+    required String senderName,
+    required String text,
+    required int timestamp,
+    required bool isLong,
+  }) async {
+    await _database.insert('notices', {
+      'sender_name': senderName,
+      'text': text,
+      'timestamp': timestamp,
+      'is_long': isLong ? 1 : 0,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> loadNotices() async {
+    return _database.query('notices', orderBy: 'timestamp ASC');
   }
 
   // ── 내부 유틸리티 ─────────────────────────────────────────────────────────
