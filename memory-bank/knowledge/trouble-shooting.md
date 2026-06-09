@@ -4,6 +4,35 @@
 
 ---
 
+## PC BLE — Windows는 핸드폰과 사전 페어링 필요
+
+### 증상
+Windows PC에서 `flutter_blue_plus_winrt`로 BLE 스캔을 해도 Android 핸드폰이 발견되지 않거나,
+발견되더라도 GATT 연결이 불안정함.
+
+### 원인
+코드 문제가 아닌 **PC 하드웨어(Bluetooth 어댑터) 수준 제약**.
+Windows Bluetooth 스택은 광고를 수신하는 것과 별개로, GATT 연결 전에 OS 수준에서
+기기 페어링(pairing)이 되어 있어야 안정적으로 연결되는 경우가 있음.
+실험 결과 핸드폰 2대를 Windows 블루투스 설정에서 수동 페어링 후 발견 및 연결 가능 확인.
+
+### 실무적 함의
+- PC를 메시 릴레이로 쓰려면 연결할 핸드폰마다 **Windows 설정 > Bluetooth에서 수동 페어링** 선행 필요
+- 재난 시나리오(낯선 사람끼리 즉시 연결)에서 PC 노드는 **진입 장벽이 높음**
+- 폰↔폰 BLE는 페어링 없이 동작(Android BLE GATT는 OS 페어링 불필요) → 재난 시 폰 중심 메시가 더 현실적
+
+### 해결 방향
+- PC 노드는 "사전 등록된 거점 릴레이" 역할로 한정 (집, 사무소 등 고정 환경)
+- 재난 시 즉석 메시의 핵심 노드는 Android 폰
+- Windows Central-only 구조는 유지하되, PC 노드의 역할을 문서에 명확히 표시
+
+### 검증
+2026-06-07 Windows PC — Galaxy S21+, Galaxy S26 Ultra 각각 수동 페어링 후:
+- PC BLE 스캔에서 핸드폰 2대 모두 발견 확인
+- GATT 연결 및 메시지 교환 정상 동작
+
+---
+
 ## Samsung phone-to-phone BLE scan returns no MeshComm devices
 
 ### Symptom

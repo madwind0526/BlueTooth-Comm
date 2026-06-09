@@ -92,12 +92,18 @@ class LanService {
   /// LAN 서비스를 시작(재시작)한다. init() 이후에만 유효.
   Future<void> start() async {
     if (_myNodeId == null) return;
+    // Windows: stop() 직후 즉시 bind 하면 포트가 아직 해제 중일 수 있어 실패.
+    // 짧은 대기 후 bind 시도.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
     await _startTcpServer();
     await _startUdpSocket();
     _startBeacon();
+    // 이전에 알고 있던 피어에 즉시 재연결 시도 (WiFi 토글 복구)
+    _reconnectCachedPeers();
   }
 
   /// LAN 서비스를 중단한다. start()로 재시작 가능.
+  /// 주소 캐시(_peerAddressCache)는 보존 — start() 후 즉시 재연결에 사용.
   Future<void> stop() async {
     _beaconTimer?.cancel();
     _beaconTimer = null;
@@ -111,7 +117,7 @@ class LanService {
     _peers.clear();
     _buffers.clear();
     _connecting.clear();
-    _peerAddressCache.clear();
+    // _peerAddressCache 는 의도적으로 유지 — start() 재연결용
     _notifyChange();
   }
 
@@ -132,7 +138,7 @@ class LanService {
       final data = packet.toBytes();
       final frame = _buildFrame(data);
       socket.add(frame);
-      await socket.flush();
+      await socket.flush().timeout(const Duration(seconds: 5));
       return true;
     } catch (e) {
       _log('sendPacket error ($peerNodeIdHex): $e');
@@ -254,6 +260,16 @@ class LanService {
     }
   }
 
+  /// 주소 캐시에 있는 피어에 즉시 재연결 시도 (start() 후 호출).
+  void _reconnectCachedPeers() {
+    for (final peer in List<LanPeer>.from(_peerAddressCache.values)) {
+      if (!_peers.containsKey(peer.nodeIdHex) &&
+          !_connecting.contains(peer.nodeIdHex)) {
+        _connectToPeer(peer);
+      }
+    }
+  }
+
   void _removePeer(String nodeIdHex) {
     _peers.remove(nodeIdHex);
     _buffers.remove(nodeIdHex);
@@ -279,12 +295,33 @@ class LanService {
       );
       _udpSocket!.broadcastEnabled = true;
 
+      // 모든 네트워크 인터페이스에 멀티캐스트 join.
+      // Windows: 이더넷+WiFi가 동시에 있을 때 한 인터페이스만 join 하면 수신 실패.
       try {
-        _udpSocket!.joinMulticast(
-          InternetAddress(LanConstants.multicastGroup),
+        final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4,
+          includeLinkLocal: false,
         );
-      } catch (_) {
-        // 멀티캐스트 미지원 환경(일부 Android)에서는 브로드캐스트로 폴백
+        if (interfaces.isEmpty) {
+          // 인터페이스 목록을 못 얻은 경우 기본 join
+          _udpSocket!.joinMulticast(
+            InternetAddress(LanConstants.multicastGroup),
+          );
+        } else {
+          for (final iface in interfaces) {
+            try {
+              _udpSocket!.joinMulticast(
+                InternetAddress(LanConstants.multicastGroup),
+                iface,
+              );
+              _log('Multicast joined on ${iface.name}');
+            } catch (e) {
+              _log('Multicast join failed on ${iface.name}: $e');
+            }
+          }
+        }
+      } catch (e) {
+        _log('Multicast setup failed: $e');
       }
 
       _udpSocket!.listen((event) {

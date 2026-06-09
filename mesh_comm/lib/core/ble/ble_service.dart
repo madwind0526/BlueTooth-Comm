@@ -226,7 +226,7 @@ class BleService {
       await FlutterBluePlus.startScan(
         timeout: BleConstants.scanDuration,
         withServices: Platform.isWindows ? [] : [Guid(BleConstants.serviceUuid)],
-        androidScanMode: AndroidScanMode.lowLatency,
+        androidScanMode: AndroidScanMode.lowPower,
       );
 
       // 타임아웃 후 자동 재스캔 (연결 유지를 위해 주기적으로 반복)
@@ -339,7 +339,7 @@ class BleService {
         _messageCharacteristics[deviceId] = characteristic;
         final frames = BleFragmentCodec.fragment(bytes, mtu: device.mtuNow);
         for (final frame in frames) {
-          await characteristic.write(frame, withoutResponse: false);
+          await characteristic.write(frame, withoutResponse: true);
         }
         _log(
           'sendPacket: ${bytes.length} bytes / ${frames.length} fragments '
@@ -354,8 +354,7 @@ class BleService {
             value: frame,
             deviceId: deviceId,
           );
-          // 일부 Android GATT 서버는 notify 완료 전에 다음 값으로 교체될 수 있다.
-          await Future<void>.delayed(const Duration(milliseconds: 15));
+          await Future<void>.delayed(const Duration(milliseconds: 40));
         }
         _log(
           'sendPacket: ${bytes.length} bytes / ${frames.length} fragments '
@@ -492,7 +491,16 @@ class BleService {
     _log('Connecting to $deviceId ...');
 
     try {
-      await device.connect(license: License.nonprofit, autoConnect: false);
+      // Windows BLE 스택은 connect/discoverServices 가 수초 걸릴 수 있어 타임아웃 필수.
+      await device
+          .connect(license: License.nonprofit, autoConnect: false)
+          .timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          _log('connect timeout: $deviceId');
+          throw TimeoutException('BLE connect timeout');
+        },
+      );
 
       // MTU 협상 (Android 전용, Windows는 자동)
       if (Platform.isAndroid) {
@@ -504,7 +512,13 @@ class BleService {
       }
 
       // 서비스 발견
-      final services = await device.discoverServices();
+      final services = await device.discoverServices().timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          _log('discoverServices timeout: $deviceId');
+          throw TimeoutException('BLE discoverServices timeout');
+        },
+      );
       final targetService = services.cast<BluetoothService?>().firstWhere(
         (s) => s?.serviceUuid == Guid(BleConstants.serviceUuid),
         orElse: () => null,
@@ -531,7 +545,13 @@ class BleService {
       }
 
       // Notify 구독
-      await messageChar.setNotifyValue(true);
+      await messageChar.setNotifyValue(true).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {
+          _log('setNotifyValue timeout: $deviceId');
+          throw TimeoutException('setNotifyValue timeout');
+        },
+      );
       _messageCharacteristics[deviceId] = messageChar;
       _notificationSubscriptions[deviceId] = messageChar.lastValueStream.listen(
         (bytes) {
@@ -667,7 +687,11 @@ class BleService {
         return peripheral.WriteRequestResult(status: 7);
       }
 
-      _handleIncomingBytes(Uint8List.fromList(value), deviceId);
+      try {
+        _handleIncomingBytes(Uint8List.fromList(value), deviceId);
+      } catch (e, st) {
+        _log('setWriteRequestCallback error: $e\n$st');
+      }
       return null;
     });
 
@@ -695,11 +719,23 @@ class BleService {
   }
 
   /// 연결된 기기의 messageChar을 찾아 반환한다.
+  /// 캐시(_messageCharacteristics)가 있으면 GATT 재탐색 없이 바로 반환.
   Future<BluetoothCharacteristic?> _findMessageCharacteristic(
     BluetoothDevice device,
   ) async {
+    final deviceId = device.remoteId.str;
+    // 캐시 우선 반환 — 중복 discoverServices 호출 방지
+    final cached = _messageCharacteristics[deviceId];
+    if (cached != null) return cached;
+
     try {
-      final services = await device.discoverServices();
+      final services = await device.discoverServices().timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          _log('_findMessageCharacteristic discoverServices timeout: $deviceId');
+          throw TimeoutException('discoverServices timeout');
+        },
+      );
       for (final service in services) {
         if (service.serviceUuid == Guid(BleConstants.serviceUuid)) {
           for (final char in service.characteristics) {

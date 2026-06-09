@@ -2,10 +2,10 @@
 
 ## Current Wave
 
-- **Wave:** 3 — Android 실기기 테스트 + Windows BLE 수정
-- **Status:** Ready
-- **Cache Status:** ACTIVE
-- **Last Checkpoint:** Phase-0 E2E 암호화 + BLE fragmentation + heartbeat (2026-06-02)
+- **Wave:** 3 — Android 실기기 테스트 + 버그 수정 계속
+- **Status:** Active
+- **Cache Status:** DIRTY (2026-06-09 수정 반영 필요)
+- **Last Checkpoint:** v1.0.X — BLE 크래시 수정 + LAN 안정화 + SCAN LAN 지원 (2026-06-09)
 
 ## Wave History
 
@@ -76,6 +76,7 @@
 
 ## Session Notes
 
+- 2026-06-07: PC BLE 페어링 제약 확인. 코드 문제 아님 — Windows Bluetooth 어댑터 수준에서 핸드폰 수동 페어링(Windows 설정) 필요. S21+, S26 Ultra 페어링 후 BLE 발견·연결 정상. 함의: PC는 거점 릴레이, 재난 즉석 메시 핵심은 Android 폰. README/trouble-shooting/CACHE/active-context 모두 반영.
 - 2026-06-07: 파일 전송 targetId 버그 수정. fileHeader/fileChunk/fileAck 수신 처리 시 targetId 확인 없어서 3기기 환경에서 비대상 기기도 파일 패킷 처리 → race condition → 청크 누락 → 0% stuck. _handleIncomingPacket switch 3곳에 _bytesEqual(targetId, myNodeId) 체크 추가. 사용자 스크린샷으로 "전송 중 0% 두 줄" 현상 확인됨. 버전 유지(1.0.U), S21/S26 재배포.
 - 2026-06-07: LAN/Wi-Fi 전송 재구조화. `TransportKind.wifi` 삭제, BLE 아닌 모든 전송 = LAN으로 통합. `LanService.start()/stop()` 추가로 LAN 토글 기능 구현. `MessagingService.startLan()/stopLan()` 추가. 홈 LAN 버튼 `onPressed: _toggleLan` 연결. 초기 LAN 상태 enabled=true. SCAN 그래프 및 Demo Mode Wi-Fi 엣지 → LAN. 가상 메시 시뮬레이터 Wi-Fi 라우팅 → LAN. widget_test.dart wifi 관련 케이스 제거/통합. Tooltip 한국어 인코딩 버그 수정. v1.0.U 빌드, S21/S26/PC 배포 완료. flutter analyze clean, flutter test 20개 통과.
 

@@ -1,5 +1,16 @@
 # Active Context
 
+## Latest 2026-06-09 (v1.0.X — BLE 크래시 수정 + LAN 안정화)
+
+- **빌드**: `v1.0.X / 2026-06-09` (pubspec `1.0.27+27`)
+- **BLE 크래시 수정**: `setWriteRequestCallback`에 try-catch 추가. `main.dart`에 `runZonedGuarded` + `FlutterError.onError`. `handleIncomingPacket` Future에 `.catchError()` 추가 (BLE·LAN 양쪽). 근본 원인: async Future가 동기 native callback에서 await 없이 호출되어 unhandled exception → Android "앱에 버그" 다이얼로그
+- **LAN 안정화**: LAN TCP 연결 후 즉시 `keyAnnounce` 브로드캐스트 (수신 측 피어 등록 유발). 30초 keepalive 타이머 (idle TCP drop 방지). PONG을 `_sendPacketToNodeId`로 라우팅 (LAN 우선)
+- **파일 전송 경로 수정**: LAN 피어 등록 지연 문제 해결로 LAN+BLE 동시 환경에서 LAN 우선 경로 정상 작동. LAN only / LAN+BLE 간 파일 전송 확인됨
+- **SCAN BLE 의존성 제거**: BLE 꺼져 있어도 LAN 연결 있으면 SCAN 동작. BLE startScan은 BLE 켜진 경우에만 실행
+- **깜박이는 점 theme-aware**: dark mode = 흰색, light mode = 검은색. 크기 8px → 16px
+- **버전 표시 수정**: `--dart-define=MESHCOMM_VERSION` 없이 빌드하면 항상 기본값 `1.0.Q` 표시되던 문제 → 이후 빌드 시 항상 dart-define 명시 필요
+- **현재 상태**: Android LAN↔LAN, LAN+BLE↔LAN+BLE 파일 전송 확인. BLE only↔BLE only 전송은 추가 조사 필요
+
 ## Latest 2026-06-05
 
 - Latest build: `v1.0.M / 20260606-125804`
@@ -34,6 +45,60 @@
 - Demo mode is now a global Settings switch below Dark mode. SCAN follows Settings demo mode instead of showing a Demo checkbox. The former SCAN checkbox is now `Node`; it defaults off and only controls whether node connection counts are shown beside PC/Phone icons.
 - Attachment transfer is documented but not fully implemented; full files need a multi-chunk protocol.
 - Identity backup is now encrypted-only. Backup asks for a password, writes `*.enc.json`, and restore requires the same password. Old plaintext identity backups are intentionally rejected. The app does not store the backup password; restoring the node ID means restoring the full identity keypair, not only the short code.
+
+## Latest 2026-06-08 (Export/Import 기본 폴더 설정)
+
+- **`_meshCommDocumentsDir()` 헬퍼 추가**: `Documents/Mesh-comm/` 반환, 없으면 자동 생성
+  - Windows: `C:\Users\<user>\Documents\Mesh-comm\`
+  - Android: `getDownloadsDirectory().parent/Documents/Mesh-comm/`
+- **적용 범위**: 연락처/대화 Export(`_saveJsonFile`), Import(`openFile`), Identity Backup/Restore(`getSaveLocation`, `openFile`) — 모두 `initialDirectory` 지정
+- **폴백**: getSaveLocation 실패 시도 `_meshCommDocumentsDir()`에 직접 저장
+
+## Latest 2026-06-08 (채팅 기록 Documents 자동 저장)
+
+- **채팅창 닫을 때 자동 저장**: `dispose()` → `_autoExportChatHistory()` (unawaited)
+- **저장 경로**: `Documents/Mesh-comm/<연락처이름>/chat_history.txt` (매번 덮어씀)
+- **Windows**: `C:\Users\<user>\Documents\Mesh-comm\<name>\`
+- **Android**: `getDownloadsDirectory().parent/Documents/Mesh-comm/<name>/`  = `/storage/emulated/0/Documents/Mesh-comm/<name>/`
+- **파일 형식**: 텍스트. 메시지+파일전송 합쳐 타임스탬프 정렬. `[2026-06-08 14:00] 나: ...`
+- 연락처 이름 파일시스템 unsafe 문자 `<>:"/\|?*` → `_` 치환
+
+## Latest 2026-06-08 (파일 Downloads 자동 저장)
+
+- **TransferStorageService 재설계**: 실제 파일 → `Downloads/Mesh-comm/sent/` 또는 `received/`. 메타데이터(.json)만 appSupportDir/mesh_meta/ 에 유지
+- **동일 파일명 처리**: `file.pdf` 충돌 시 `file(1).pdf`, `file(2).pdf` ... 자동 회피
+- **AndroidManifest**: `WRITE_EXTERNAL_STORAGE` (maxSdkVersion=29), `READ_EXTERNAL_STORAGE` (maxSdkVersion=32) 추가
+- **chat_screen._saveFile()**: Android → 저장 경로 스낵바 표시. Windows → 다른 위치에 복사 저장 다이얼로그 유지
+- **Windows 경로**: `C:\Users\<user>\Downloads\Mesh-comm\sent|received\`
+- **Android 경로**: `/storage/emulated/0/Downloads/Mesh-comm/sent|received/`
+
+## Latest 2026-06-08 (공지 UI 재배치)
+
+- **공지S/L → SCAN 하단 버튼으로 이전**: `_buildScan()` 하단에 "공지 보내기" OutlinedButton 추가 (Server 레벨 제외)
+- **팝업 다이얼로그**: `_NoticeSendDialog` + `_NoticeTypeButton` 위젯 신규 추가. 반투명 회색 컨테이너(grey[850] opacity 0.96), 공지S/공지L 토글, 50자 입력, 쿨다운 표시, 발송/취소 버튼
+- **채팅 화면 공지S/L 항목은 그대로 유지** (제거 요청 없음)
+
+## Latest 2026-06-08 (보안 강화 + R-12)
+
+- **개인키 secure storage 이전**: `flutter_secure_storage` 추가 (Android Keystore / Windows DPAPI). 기존 DB 평문 저장 → 자동 마이그레이션 후 DB 개인키 0으로 덮어쓰기. 신규 설치는 처음부터 secure storage에만 저장.
+- **R-12 완료**: BLE scan mode `lowLatency` → `lowPower` (Android). 재난 시 배터리 수명 연장.
+- **알려진 제한 사항 항목 해소**: 개인키 평문 저장 해결, R-12 배터리 효율 해결
+
+## Latest 2026-06-08 (스코프 확정 + 기능 추가)
+
+- **스코프 제거**: 음성 메시지·위성 연동 완전 제거
+- **스코프 제거**: adminNotice — 공지S/L로 충분, 구현 안 함
+- **스코프 보류**: 그룹 채팅 — 카톡처럼 하나의 채팅방(group_id+공유키+group_messages)이 맞는 방향이나 큰 작업이므로 설계 더 고민 후 진행
+- **구현 완료**: 파일 전송 양방향 취소 (`fileCancel` 0x0C 패킷, `cancelTransfer(notify:bool)`)
+- **구현 완료**: 홈 연락처 타일 전송 중 깜박이는 보라색 원 인디케이터 (`_BlinkingDot`)
+- **결정**: 3홉 릴레이는 가상망으로만 검증. SCAN UI는 현재 수준으로 동결
+
+## Latest 2026-06-07 (PC BLE 페어링 제약 확인)
+
+- **PC BLE 동작 확인**: 코드 문제 아님 — PC 하드웨어(Bluetooth 어댑터) 수준 제약
+- Windows 설정에서 핸드폰 수동 페어링 후 S21+, S26 Ultra 2대 모두 BLE 발견·연결 정상 확인
+- **핵심 함의**: PC는 사전 페어링된 고정 거점 릴레이에 적합; 재난 즉석 메시는 폰 중심이 더 현실적
+- README.md 및 trouble-shooting.md에 반영 완료
 
 ## Latest 2026-06-07 (v1.0.W — 버그 수정 릴리스)
 

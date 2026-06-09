@@ -2,6 +2,46 @@
 
 > 임시 발견사항 저장소. Wave 완료 후 knowledge/ 로 flush하고 이 섹션을 비울 것.
 
+## Active Findings (2026-06-09 — v1.0.X BLE 크래시 수정 + LAN 안정화)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 버그수정 | BLE 크래시 근본 원인: `setWriteRequestCallback`(동기 native callback)에서 `handleIncomingPacket`(async Future)를 await 없이 호출 → unhandled exception → Android "앱에 버그" 다이얼로그. 수정: ble_service.dart try-catch + main.dart runZonedGuarded + FlutterError.onError + 각 호출 위치 .catchError() | trouble-shooting.md |
+| 버그수정 | LAN 피어 등록 비대칭 문제: TCP outgoing 측은 즉시 피어 등록, incoming 측은 첫 MeshPacket 수신 시에만 등록 → LAN+BLE 동시 환경에서 `_lan.hasPeer()` false → BLE 경로 선택 → BLE 크래시로 0% stuck. 수정: 새 LAN peer 연결 시 즉시 `broadcastKeyAnnounce()` 호출 (incoming 측 피어 등록 유발) | trouble-shooting.md |
+| 버그수정 | LAN TCP idle drop: 30초 keepalive 타이머 추가. `_lan.connectedCount > 0`이면 주기적 keyAnnounce 전송 | trouble-shooting.md |
+| 버그수정 | PONG BLE only 라우팅: `_ble.sendPacket + broadcastPacket` → `_sendPacketToNodeId` (LAN 우선, BLE 폴백)으로 수정 | trouble-shooting.md |
+| 구현 | SCAN BLE 의존성 제거: BLE 꺼져도 LAN 있으면 SCAN 동작. `if (!_bluetoothEnabled && !_lanEnabled) return`. BLE startScan은 BLE 켜진 경우에만 실행 | PATTERNS.md |
+| UI | 깜박이는 전송 인디케이터 점 theme-aware: Builder + Theme.of(ctx).brightness로 dark=흰색, light=검은색. 8px→16px | PATTERNS.md |
+| 규칙 | 버전 표시: `String.fromEnvironment('MESHCOMM_VERSION', defaultValue: '1.0.Q')` — 빌드 시 반드시 `--dart-define=MESHCOMM_VERSION=X.Y.Z` 명시 필요. 미지정 시 항상 기본값 표시 | RULES.md |
+| 검증 | LAN↔LAN, LAN+BLE↔LAN+BLE 파일 전송 정상 동작 확인 (v1.0.X) | — |
+| 미해결 | BLE only↔BLE only 파일 전송 여전히 불안정. BLE 크래시 수정 후에도 동작 안 됨. logcat `[BLE] handleIncomingPacket error:` 또는 `DROP(공개키 없음)` 확인 필요 | trouble-shooting.md |
+
+---
+
+## Active Findings (2026-06-08 — 스코프 결정 + 양방향 취소)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 스코프 제거 | 음성 메시지·위성 연동 → 완전 제거. Phase 4 계획에서 삭제 | RULES.md |
+| 스코프 제거 | adminNotice (MsgType 0x03) → 구현 안 함. 공지S/L로 충분 | design-document.md |
+| 스코프 보류 | 그룹 채팅 (진짜 채팅방) → 설계 더 고민 필요. 서두르지 않음. 핵심: group_id+공유키+group_messages 테이블+GroupChatScreen | design-document.md |
+| 구현 | 파일 전송 양방향 취소: MsgType.fileCancel(0x0C) 추가, cancelTransfer(notify:bool), handleFileCancel(), messaging_service에 라우팅 추가 | PATTERNS.md |
+| 구현 | 홈 연락처 타일 전송 중 인디케이터: _BlinkingDot (700ms, 보라 8px 원), _activeTidToContact Map으로 tid→contact 추적, TransferStarted에 contactNodeIdHex 추가 | PATTERNS.md |
+| 3홉 릴레이 | 물리 기기 부족 → 가상망(VirtualMeshSimulator)으로만 확인하는 것으로 결정 | — |
+| SCAN UI | 현재 수준으로 완료. 더 이상 수정하지 않음 | — |
+
+---
+
+## Active Findings (2026-06-07 v4 — PC BLE 페어링 제약 확인)
+
+| 유형 | 발견사항 | 이동 대상 |
+|------|----------|-----------|
+| 하드웨어 제약 | PC BLE 동작 확인: 코드 문제 아님, PC Bluetooth 어댑터 수준에서 핸드폰 수동 페어링(Windows 설정) 후 발견·연결 가능 | trouble-shooting.md |
+| 설계 함의 | PC 노드는 사전 페어링된 고정 거점 릴레이 역할에 적합. 재난 즉석 메시의 핵심은 Android 폰 (페어링 불필요) | design-document.md |
+| 검증 | S21+, S26 Ultra 수동 페어링 후 PC에서 핸드폰 2대 모두 BLE 발견 확인 (2026-06-07) | trouble-shooting.md |
+
+---
+
 ## Active Findings (2026-06-07 v3 — v1.0.V)
 
 | 유형 | 발견사항 | 이동 대상 |
