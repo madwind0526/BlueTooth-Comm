@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -69,6 +70,63 @@ class GroupService {
       groups.add(_rowToGroup(row, memberRows, unread));
     }
     return groups;
+  }
+
+  // ── Backup / Restore ──────────────────────────────────────────────────────
+
+  /// 모든 그룹을 JSON 문자열로 직렬화한다.
+  Future<String> exportAllGroupsToJson() async {
+    final groups = await getAllGroups();
+    return jsonEncode({
+      'version': 1,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'groups': groups
+          .map((g) => {
+                'groupId': g.groupId,
+                'name': g.name,
+                'leaderHex': g.leaderHex,
+                'members': g.members.map((m) => m.nodeIdHex).toList(),
+                'createdAt': g.createdAt,
+              })
+          .toList(),
+    });
+  }
+
+  /// JSON 문자열에서 그룹을 복원한다. 반환값: 복원된 그룹 수.
+  Future<int> importGroupsFromJson(String jsonStr) async {
+    final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+    final list = (data['groups'] as List).cast<Map<String, dynamic>>();
+    var count = 0;
+    for (final g in list) {
+      final gid = g['groupId'] as String;
+      if (await _db.getChatGroup(gid) != null) continue; // 이미 존재하면 스킵
+      final leaderHex = g['leaderHex'] as String;
+      final leaderId = _fromHex(leaderHex);
+      final createdAt = g['createdAt'] as int;
+      await _db.upsertChatGroup(
+        groupId: gid,
+        name: g['name'] as String,
+        leaderId: leaderId,
+        createdAt: createdAt,
+      );
+      for (final hex in (g['members'] as List).cast<String>()) {
+        await _db.upsertGroupMember(
+          groupId: gid,
+          nodeId: _fromHex(hex),
+          joinedAt: createdAt,
+        );
+      }
+      count++;
+    }
+    return count;
+  }
+
+  static Uint8List _fromHex(String hex) {
+    final bytes = <int>[];
+    for (var i = 0; i < hex.length; i += 2) {
+      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+    }
+    return Uint8List.fromList(bytes);
   }
 
   Future<void> deleteGroup(String groupId) async {

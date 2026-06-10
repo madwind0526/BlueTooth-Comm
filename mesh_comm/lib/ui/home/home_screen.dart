@@ -480,6 +480,36 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadChatGroups();
   }
 
+  Future<void> _backupGroups() async {
+    try {
+      final json = await _groupService.exportAllGroupsToJson();
+      final backupDir = await TransferStorageService.groupBackupDir();
+      final now = DateTime.now();
+      final stamp =
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final file = File(p.join(backupDir.path, 'group_backup_$stamp.json'));
+      await file.writeAsString(json);
+      _showMessage('백업 완료: ${file.path}');
+    } catch (e) {
+      _showMessage('백업 실패: $e');
+    }
+  }
+
+  Future<void> _restoreGroups() async {
+    try {
+      const typeGroup = XTypeGroup(label: 'JSON', extensions: ['json']);
+      final file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (file == null || !mounted) return;
+      final json = await file.readAsString();
+      final count = await _groupService.importGroupsFromJson(json);
+      if (!mounted) return;
+      _showMessage('복원 완료: $count개 그룹');
+      _loadChatGroups();
+    } catch (e) {
+      _showMessage('복원 실패: $e');
+    }
+  }
+
   Future<void> _loadNotices() async {
     final rows = await DatabaseService().loadNotices();
     if (!mounted) return;
@@ -2369,17 +2399,49 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Container(
                 color: const Color(0xFF16213E),
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _showCreateGroupDialog,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('그룹 만들기'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF7C6AF7),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _showCreateGroupDialog,
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('그룹 만들기'),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _backupGroups,
+                            icon: const Icon(Icons.backup_outlined, size: 18),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Backup'),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _restoreGroups,
+                            icon: const Icon(Icons.restore_page_outlined, size: 18),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Restore'),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      '그룹 연락처를 백업/복원합니다.',
+                      style: TextStyle(fontSize: 11, color: Colors.white54),
+                    ),
+                  ],
                 ),
               ),
             ),

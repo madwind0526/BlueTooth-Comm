@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:mesh_comm/features/contacts/contact_model.dart';
 import 'package:mesh_comm/features/groups/chat_group_model.dart';
 import 'package:mesh_comm/features/groups/group_messaging_service.dart';
@@ -13,6 +15,7 @@ import 'package:mesh_comm/features/messaging/messaging_service.dart';
 import 'package:mesh_comm/features/settings/app_settings_service.dart';
 import 'package:mesh_comm/features/transfer/transfer_model.dart';
 import 'package:mesh_comm/features/transfer/transfer_service.dart';
+import 'package:mesh_comm/features/transfer/transfer_storage_service.dart';
 import 'package:mesh_comm/ui/home/home_models.dart';
 
 class GroupChatScreen extends StatefulWidget {
@@ -57,6 +60,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   StreamSubscription<dynamic>? _transferSubscription;
   final Map<String, ({TransferMeta meta, double progress, TransferDirection direction})>
       _activeTransfers = {};
+  // 완료된 파일: fileName → 절대 경로 (sent/ 또는 received/ 에 저장된 파일)
+  final Map<String, String> _filePaths = {};
+  final Map<String, TransferKind> _fileKinds = {};
   MessageSendMode _messageMode = MessageSendMode.normal;
   bool _isSending = false;
 
@@ -65,6 +71,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     super.initState();
     _group = widget.group;
     _loadMessages();
+    _loadExistingFiles();
     _msgSubscription = _groupMessaging.messageStream
         .where((m) => m.groupId == _group.groupId)
         .listen(_onIncomingMessage);
@@ -81,13 +88,35 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           (meta: s.meta, progress: s.progress, direction: s.direction);
     }
 
-    _transferSubscription = MessagingService().transferStream.listen((event) {
+    _transferSubscription = MessagingService().transferStream.listen((event) async {
       if (!mounted) return;
       // 그룹 멤버 관련 전송만 처리 (1:1 채팅 오염 방지)
       final isGroupTransfer = _activeTransfers.containsKey(event.tid) ||
           (event is TransferStarted &&
               memberHexes.contains(event.contactNodeIdHex));
       if (!isGroupTransfer) return;
+
+      if (event is TransferCompleted) {
+        // 비동기 파일 저장 후 setState
+        if (!mounted) return;
+        setState(() => _activeTransfers.remove(event.tid));
+        try {
+          final dir = await TransferStorageService.groupFileDir(
+            groupName: _group.name,
+            sub: 'received',
+          );
+          final path = p.join(dir.path, event.meta.fileName);
+          await File(path).writeAsBytes(event.data);
+          if (!mounted) return;
+          setState(() {
+            _filePaths[event.meta.fileName] = path;
+            _fileKinds[event.meta.fileName] = event.meta.kind;
+          });
+        } catch (e) {
+          debugPrint('[GroupChat] 파일 저장 실패: $e');
+        }
+        return;
+      }
 
       setState(() {
         switch (event) {
@@ -190,6 +219,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile();
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
+    // 발신자: sent/ 에 저장 후 UI 반영
+    try {
+      final dir = await TransferStorageService.groupFileDir(
+          groupName: _group.name, sub: 'sent');
+      final path = p.join(dir.path, file.name);
+      await File(path).writeAsBytes(data);
+      if (!mounted) return;
+      setState(() {
+        _filePaths[file.name] = path;
+        _fileKinds[file.name] = TransferKind.file;
+      });
+    } catch (_) {}
     for (final member in _group.members) {
       if (_isMe(member.nodeId)) continue;
       if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
@@ -221,6 +262,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile(acceptedTypeGroups: [imageTypes]);
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
+    // 발신자: sent/ 에 저장 후 UI 반영
+    try {
+      final dir = await TransferStorageService.groupFileDir(
+          groupName: _group.name, sub: 'sent');
+      final path = p.join(dir.path, file.name);
+      await File(path).writeAsBytes(data);
+      if (!mounted) return;
+      setState(() {
+        _filePaths[file.name] = path;
+        _fileKinds[file.name] = TransferKind.image;
+      });
+    } catch (_) {}
     for (final member in _group.members) {
       if (_isMe(member.nodeId)) continue;
       if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
@@ -641,7 +694,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final timeStr =
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
-    // 파일/이미지는 아이콘 + 파일명 텍스트 버블
+    // 저장된 파일/이미지가 있으면 미리보기 버블
+    final savedPath = (isFile || isImage) ? _filePaths[displayText] : null;
+    if (savedPath != null) {
+      final kind = _fileKinds[displayText] ??
+          (isImage ? TransferKind.image : TransferKind.file);
+      return _buildFileBubble(
+        isOut: isOut,
+        label: label,
+        timeStr: timeStr,
+        fileName: displayText,
+        filePath: savedPath,
+        kind: kind,
+      );
+    }
+
+    // 아직 전송/수신 중이거나 데이터 없음: 아이콘 + 파일명 텍스트 버블
     final icon = isImage
         ? Icons.image_outlined
         : isFile
@@ -721,6 +789,189 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ],
       ),
     );
+  }
+
+  /// 앱 시작 시 sent/received 디렉토리에 기존 파일이 있으면 불러온다.
+  Future<void> _loadExistingFiles() async {
+    const imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.webp'};
+    for (final sub in ['sent', 'received']) {
+      try {
+        final dir = await TransferStorageService.groupFileDir(
+            groupName: _group.name, sub: sub);
+        if (!await dir.exists()) continue;
+        await for (final entity in dir.list()) {
+          if (entity is! File) continue;
+          final name = p.basename(entity.path);
+          if (_filePaths.containsKey(name)) continue;
+          final ext = p.extension(name).toLowerCase();
+          _filePaths[name] = entity.path;
+          _fileKinds[name] =
+              imageExts.contains(ext) ? TransferKind.image : TransferKind.file;
+        }
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildFileBubble({
+    required bool isOut,
+    required String label,
+    required String timeStr,
+    required String fileName,
+    required String filePath,
+    required TransferKind kind,
+  }) {
+    Widget fileContent;
+    if (kind == TransferKind.image) {
+      fileContent = GestureDetector(
+        onTap: () => _showImageFullScreen(filePath, fileName),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            File(filePath),
+            width: 200,
+            height: 200,
+            fit: BoxFit.cover,
+            errorBuilder: (ctx, err, stack) => const Icon(
+              Icons.broken_image_outlined,
+              size: 60,
+              color: _textSecondary,
+            ),
+          ),
+        ),
+      );
+    } else {
+      fileContent = GestureDetector(
+        onTap: () => _showSaveDialog(filePath, fileName),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 240),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isOut ? _outgoingBubble : _incomingBubble,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.insert_drive_file, color: Colors.white70, size: 28),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      fileName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: _textPrimary, fontSize: 13),
+                    ),
+                    Text(
+                      '탭하여 저장',
+                      style: const TextStyle(color: _textSecondary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment:
+            isOut ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          if (!isOut)
+            Padding(
+              padding: const EdgeInsets.only(left: 6, bottom: 2),
+              child: Text(label,
+                  style: const TextStyle(color: _textSecondary, fontSize: 11)),
+            ),
+          Row(
+            mainAxisAlignment:
+                isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [fileContent],
+          ),
+          Padding(
+            padding: EdgeInsets.only(
+              left: isOut ? 0 : 8,
+              right: isOut ? 8 : 0,
+              top: 2,
+            ),
+            child: Text(timeStr,
+                style:
+                    TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImageFullScreen(String filePath, String fileName) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(child: Image.file(File(filePath))),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded, color: Colors.white),
+                    tooltip: '저장',
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _showSaveDialog(filePath, fileName);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSaveDialog(String srcPath, String fileName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('파일 저장'),
+        content: Text('$fileName\nDownloads 폴더에 저장하시겠습니까?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('저장')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final dest = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
+      final destPath = p.join(dest.path, fileName);
+      await File(srcPath).copy(destPath);
+      _showMessage('저장 완료: Downloads/$fileName');
+    } catch (e) {
+      _showMessage('저장 실패: $e');
+    }
   }
 
   Widget _buildInputBar() {

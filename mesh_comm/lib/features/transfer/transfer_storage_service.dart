@@ -63,6 +63,20 @@ class TransferStorageService {
     return target;
   }
 
+  /// 그룹 파일 디렉토리: Documents/Mesh-comm/Group/{groupName}/sent|received
+  static Future<Directory> groupFileDir({
+    required String groupName,
+    required String sub, // 'sent' or 'received'
+  }) async {
+    final safeName = groupName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    return meshCommPublicDir(sub: 'Group/$safeName/$sub');
+  }
+
+  /// 그룹 백업 디렉토리: Documents/Mesh-comm/Group/
+  static Future<Directory> groupBackupDir() async {
+    return meshCommPublicDir(sub: 'Group');
+  }
+
   Future<Directory> _fileDir(TransferDirection direction) async {
     final sub = direction == TransferDirection.outgoing ? 'sent' : 'received';
     return meshCommPublicDir(sub: sub);
