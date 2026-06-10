@@ -268,8 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _playIncomingMessageAlert();
       _loadChatGroups();
     });
-    _groupUpdateSubscription = _groupMessaging.updateStream.listen((group) {
-      _syncContactGroupNames(group);
+    _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
       _loadChatGroups();
     });
   }
@@ -305,14 +304,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _chatGroups = groups);
   }
 
-  /// 그룹 멤버들의 연락처 group_name을 해당 그룹명으로 동기화한다.
-  Future<void> _syncContactGroupNames(ChatGroup group) async {
-    final myNodeId = IdentityService().myNodeId;
-    for (final member in group.members) {
-      if (_bytesEqual(member.nodeId, myNodeId)) continue;
-      await _contactService.setGroup(member.nodeId, group.name);
-    }
-  }
 
   void _handleIncomingGroupInvite(GroupInvite invite) {
     if (!mounted) return;
@@ -348,9 +339,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 toNodeId: invite.fromNodeId,
                 accepted: true,
               );
-              // 그룹 멤버들의 연락처 group_name 동기화
-              final group = await _groupService.getGroup(invite.groupId);
-              if (group != null) await _syncContactGroupNames(group);
               _loadChatGroups();
             },
             child: const Text('수락'),
