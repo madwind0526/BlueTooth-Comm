@@ -430,7 +430,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('취소'),
             ),
             FilledButton(
-              onPressed: nameController.text.trim().isEmpty || selected.isEmpty
+              onPressed: nameController.text.trim().isEmpty
                   ? null
                   : () async {
                       Navigator.pop(ctx);

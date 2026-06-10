@@ -73,8 +73,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         .listen((updated) {
       if (mounted) setState(() => _group = updated);
     });
+    // 화면 복원: 진행 중인 그룹 멤버 관련 전송만 복원
+    final memberHexes = _group.members.map((m) => m.nodeIdHex).toSet();
+    for (final s in TransferService().activeTransferSnapshots) {
+      if (!memberHexes.contains(s.contactNodeIdHex)) continue;
+      _activeTransfers[s.tid] =
+          (meta: s.meta, progress: s.progress, direction: s.direction);
+    }
+
     _transferSubscription = MessagingService().transferStream.listen((event) {
       if (!mounted) return;
+      // 그룹 멤버 관련 전송만 처리 (1:1 채팅 오염 방지)
+      final isGroupTransfer = _activeTransfers.containsKey(event.tid) ||
+          (event is TransferStarted &&
+              memberHexes.contains(event.contactNodeIdHex));
+      if (!isGroupTransfer) return;
+
       setState(() {
         switch (event) {
           case TransferStarted():

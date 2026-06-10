@@ -204,8 +204,9 @@ class _ChatScreenState extends State<ChatScreen> {
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
 
-    // 채팅방 재진입 시 진행 중인 전송 복원
+    // 채팅방 재진입 시 이 연락처 관련 전송만 복원
     for (final s in TransferService().activeTransferSnapshots) {
+      if (s.contactNodeIdHex != targetHex) continue;
       _activeTransfers[s.tid] = _ActiveTransfer(
         meta: s.meta,
         progress: s.progress,
@@ -216,7 +217,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _transferSubscription = MessagingService().transferStream.listen((event) {
       if (!mounted) return;
-      final isOurs = _activeTransfers.containsKey(event.tid) || event is TransferStarted;
+      // 이 연락처 관련 전송만 처리 (그룹 전송 오염 방지)
+      final isOurs = _activeTransfers.containsKey(event.tid) ||
+          (event is TransferStarted && event.contactNodeIdHex == targetHex);
       if (!isOurs) return;
 
       setState(() {
