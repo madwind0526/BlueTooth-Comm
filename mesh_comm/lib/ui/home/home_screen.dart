@@ -301,6 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final groups = await _groupService.getAllGroups();
     if (!mounted) return;
+    groups.sort((a, b) => a.name.compareTo(b.name));
     setState(() => _chatGroups = groups);
   }
 
@@ -361,26 +362,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
     await showDialog<void>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          backgroundColor: const Color(0xFF1E1E2E).withAlpha(242),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('새 그룹 만들기'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: '그룹 이름',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+      builder: (ctx) {
+        String? errorMsg;
+        return StatefulBuilder(
+          builder: (ctx, setDlg) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E2E).withAlpha(242),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('새 그룹 만들기'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: '그룹 이름',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    errorText: errorMsg,
+                  ),
+                  onChanged: (_) => setDlg(() => errorMsg = null),
                 ),
-                onChanged: (_) => setDlg(() {}),
-              ),
-            ],
-          ),
+              ],
+            ),
           content: SizedBox(
             width: 300,
             height: 320,
@@ -433,9 +437,14 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: nameController.text.trim().isEmpty
                   ? null
                   : () async {
+                      final name = nameController.text.trim();
+                      if (_chatGroups.any((g) => g.name == name)) {
+                        setDlg(() => errorMsg = '그룹명이 있습니다');
+                        return;
+                      }
                       Navigator.pop(ctx);
                       await _doCreateGroup(
-                        nameController.text.trim(),
+                        name,
                         contacts
                             .where((c) {
                               final hex = c.nodeId
@@ -451,7 +460,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-      ),
+      );
+      },
     );
     nameController.dispose();
   }
@@ -1227,6 +1237,25 @@ class _HomeScreenState extends State<HomeScreen> {
       case _GroupAction.rename:
         await _renameChatGroup(group);
       case _GroupAction.delete:
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('그룹 삭제'),
+            content: Text('${group.name} 그룹을 삭제하시겠습니까?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('취소'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('삭제'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
         await _groupService.deleteGroup(group.groupId);
         _loadChatGroups();
     }
