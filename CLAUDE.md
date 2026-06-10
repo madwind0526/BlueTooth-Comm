@@ -25,6 +25,67 @@
 
 **PC 간 연결**: 직접 연결 없음. 폰 메시 네트워크를 통해서만 PC↔PC 통신.
 
+## 빌드 & 커밋 규칙 (MANDATORY)
+
+> **이 규칙은 반드시 지켜야 한다. 예외 없음.**
+
+### 빌드 규칙
+
+- **항상 Android + Windows 동시 빌드**한다. 어느 하나만 빌드하지 않는다.
+- 빌드 후 **양쪽 모두 실행**한다 (Android: adb install + launch, Windows: Stop-Process + Start-Process).
+
+### 버전 올리기 + git commit 기준
+
+| 상황 | 버전 올리기 | git commit |
+|------|-----------|-----------|
+| 간단한 UI 수정 (1~2개 위젯 변경) | ❌ | ❌ |
+| 버그 1~2개 수정 (로직 변경 없음) | ❌ | ❌ |
+| **로직 변경** (서비스, 스트림, DB 등) | ✅ | ✅ |
+| **버그 3개 이상 수정** | ✅ | ✅ |
+| **새로운 기능 추가** | ✅ | ✅ |
+| **여러 파일 동시 수정** | ✅ | ✅ |
+| **배포 (기기에 설치)** | ✅ | ✅ |
+
+### 버전 올리는 방법
+
+```dart
+// mesh_comm/lib/core/app_version.dart
+defaultValue: '1.2.D'  →  '1.2.E'
+```
+
+```yaml
+# mesh_comm/pubspec.yaml
+version: 1.2.1+53  →  1.2.1+54
+```
+
+### git commit 방법
+
+```bash
+git add <변경된 파일들>   # -A 또는 . 사용 금지 — 파일명 명시
+git commit -m "fix/feat: v버전 — 변경 요약"
+```
+
+### 빌드 + 배포 명령 (전체 순서)
+
+```bash
+# 1. Android 빌드
+flutter build apk --dart-define=MESHCOMM_VERSION=X.X.X --dart-define=MESHCOMM_BUILD_TIME=YYYY-MM-DD
+
+# 2. Windows 빌드
+flutter build windows --dart-define=MESHCOMM_VERSION=X.X.X --dart-define=MESHCOMM_BUILD_TIME=YYYY-MM-DD
+
+# 3. Android 배포 (S21 + S26 동시)
+adb -s R3CR10WTM7P shell am force-stop com.meshcomm.mesh_comm && adb -s R3CR10WTM7P install -r build/app/outputs/flutter-apk/app-release.apk
+adb -s R5KL200M0AE shell am force-stop com.meshcomm.mesh_comm && adb -s R5KL200M0AE install -r build/app/outputs/flutter-apk/app-release.apk
+adb -s R3CR10WTM7P shell monkey -p com.meshcomm.mesh_comm 1
+adb -s R5KL200M0AE shell monkey -p com.meshcomm.mesh_comm 1
+
+# 4. Windows 배포
+# PowerShell:
+Get-Process mesh_comm -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process "build\windows\x64\runner\Release\mesh_comm.exe"
+```
+
 ## Commands
 
 ```bash
