@@ -268,7 +268,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _playIncomingMessageAlert();
       _loadChatGroups();
     });
-    _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
+    _groupUpdateSubscription = _groupMessaging.updateStream.listen((group) {
+      _syncContactGroupNames(group);
       _loadChatGroups();
     });
   }
@@ -304,6 +305,15 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _chatGroups = groups);
   }
 
+  /// 그룹 멤버들의 연락처 group_name을 해당 그룹명으로 동기화한다.
+  Future<void> _syncContactGroupNames(ChatGroup group) async {
+    final myNodeId = IdentityService().myNodeId;
+    for (final member in group.members) {
+      if (_bytesEqual(member.nodeId, myNodeId)) continue;
+      await _contactService.setGroup(member.nodeId, group.name);
+    }
+  }
+
   void _handleIncomingGroupInvite(GroupInvite invite) {
     if (!mounted) return;
     final groupName = invite.groupName;
@@ -329,7 +339,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
               await _groupService.acceptInvite(invite);
-              // 수락자 본인을 그룹에 추가 (invite.memberIds에는 자신이 없음)
               await _groupService.addMember(
                 invite.groupId,
                 IdentityService().myNodeId,
@@ -339,6 +348,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 toNodeId: invite.fromNodeId,
                 accepted: true,
               );
+              // 그룹 멤버들의 연락처 group_name 동기화
+              final group = await _groupService.getGroup(invite.groupId);
+              if (group != null) await _syncContactGroupNames(group);
               _loadChatGroups();
             },
             child: const Text('수락'),
@@ -346,6 +358,128 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showCreateGroupDialog() async {
+    if (!mounted) return;
+    final contacts = _savedContactsExcludingSelf();
+    if (contacts.isEmpty) {
+      _showMessage('초대할 연락처가 없습니다.');
+      return;
+    }
+
+    final nameController = TextEditingController();
+    final selected = <String>{}; // nodeIdHex set
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E).withAlpha(242),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('새 그룹 만들기'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: '그룹 이름',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (_) => setDlg(() {}),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 300,
+            height: 320,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black38,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: contacts.length,
+                itemBuilder: (_, i) {
+                  final c = contacts[i];
+                  final hex = c.nodeId
+                      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                      .join();
+                  final isChecked = selected.contains(hex);
+                  return CheckboxListTile(
+                    dense: true,
+                    value: isChecked,
+                    onChanged: (v) => setDlg(() {
+                      if (v == true) {
+                        selected.add(hex);
+                      } else {
+                        selected.remove(hex);
+                      }
+                    }),
+                    title: Text(
+                      contactDisplayName(c),
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    subtitle: c.groupName != null
+                        ? Text(
+                            '[${c.groupName}]',
+                            style: const TextStyle(fontSize: 11),
+                          )
+                        : null,
+                    controlAffinity: ListTileControlAffinity.leading,
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: nameController.text.trim().isEmpty || selected.isEmpty
+                  ? null
+                  : () async {
+                      Navigator.pop(ctx);
+                      await _doCreateGroup(
+                        nameController.text.trim(),
+                        contacts
+                            .where((c) {
+                              final hex = c.nodeId
+                                  .map((b) =>
+                                      b.toRadixString(16).padLeft(2, '0'))
+                                  .join();
+                              return selected.contains(hex);
+                            })
+                            .toList(),
+                      );
+                    },
+              child: const Text('만들기'),
+            ),
+          ],
+        ),
+      ),
+    );
+    nameController.dispose();
+  }
+
+  Future<void> _doCreateGroup(String name, List<Contact> invitees) async {
+    final myNodeId = IdentityService().myNodeId;
+    final group = await _groupService.createGroup(name: name, myNodeId: myNodeId);
+    for (final contact in invitees) {
+      await _groupMessaging.sendInvite(
+        group: group,
+        targetNodeId: contact.nodeId,
+      );
+    }
+    final count = invitees.length;
+    _showMessage('그룹 [$name]을(를) 만들었습니다. $count명에게 초대장을 보냈습니다.');
+    _loadChatGroups();
   }
 
   Future<void> _loadNotices() async {
@@ -2202,11 +2336,37 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (_filter == HomeFilter.groups) {
       final groups = _settings.demoMode ? _demoChatGroups : _chatGroups;
-      return _ChatGroupList(
-        groups: groups,
-        onTap: _openGroupChat,
-        onAction: _handleGroupAction,
-        nameResolver: _resolveContactName,
+      return Stack(
+        children: [
+          _ChatGroupList(
+            groups: groups,
+            onTap: _openGroupChat,
+            onAction: _handleGroupAction,
+            nameResolver: _resolveContactName,
+          ),
+          if (!_settings.demoMode)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                color: const Color(0xFF16213E),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _showCreateGroupDialog,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('그룹 만들기'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF7C6AF7),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       );
     }
 
@@ -5029,6 +5189,7 @@ class _ChatGroupList extends StatelessWidget {
       );
     }
     return ListView(
+      padding: const EdgeInsets.only(bottom: 72), // 하단 버튼 공간 확보
       children: [
         for (final group in groups)
           _ChatGroupTile(
