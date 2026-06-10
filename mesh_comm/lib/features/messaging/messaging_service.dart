@@ -270,8 +270,9 @@ class MessagingService {
     _transfer.init(sendPacket: _sendPacketToNodeId);
 
     // 전송 완료 시 자동으로 로컬에 파일 저장 (채팅창 열려있지 않아도 보존)
+    // 그룹 전송(groupId != null)은 1:1 채팅 저장소를 오염시키지 않도록 제외.
     _transfer.transferStream.listen((event) {
-      if (event is TransferCompleted) {
+      if (event is TransferCompleted && event.meta.groupId == null) {
         TransferStorageService().save(
           data: event.data,
           tid: event.meta.tid,
@@ -751,6 +752,7 @@ class MessagingService {
     required String targetNodeIdHex,
     TransferKind kind = TransferKind.file,
     int imageIndex = 0,
+    String? groupId,
   }) async {
     final isLan = _lan.hasPeer(targetNodeIdHex);
     final isBle = _deviceToNodeHex.values.contains(targetNodeIdHex);
@@ -770,6 +772,7 @@ class MessagingService {
         kind: kind,
         imageIndex: imageIndex,
         chunkSize: chunkSize,
+        groupId: groupId,
       );
     } catch (e) {
       _log('sendFile 오류: $e');

@@ -199,6 +199,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         mimeType: 'application/octet-stream',
         targetNodeIdHex: member.nodeIdHex,
         kind: TransferKind.file,
+        groupId: _group.groupId,
       );
     }
     await _groupMessaging.sendGroupMessage(
@@ -229,6 +230,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         mimeType: 'image/jpeg',
         targetNodeIdHex: member.nodeIdHex,
         kind: TransferKind.image,
+        groupId: _group.groupId,
       );
     }
     await _groupMessaging.sendGroupMessage(
@@ -639,6 +641,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final timeStr =
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
+    // 파일/이미지는 아이콘 + 파일명 텍스트 버블
     final icon = isImage
         ? Icons.image_outlined
         : isFile

@@ -39,6 +39,9 @@ class TransferMeta {
   /// 이미지 묶음 전송 시 이 이미지의 순서 (0-based). 단일 파일은 0.
   final int imageIndex;
 
+  /// 그룹 전송 시 그룹 ID. null이면 1:1 전송.
+  final String? groupId;
+
   const TransferMeta({
     required this.tid,
     required this.fileName,
@@ -47,6 +50,7 @@ class TransferMeta {
     required this.mimeType,
     required this.kind,
     this.imageIndex = 0,
+    this.groupId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -57,6 +61,7 @@ class TransferMeta {
         'mime': mimeType,
         'kind': kind.name,
         'imgIdx': imageIndex,
+        if (groupId != null) 'gid': groupId,
       };
 
   factory TransferMeta.fromJson(Map<String, dynamic> j) => TransferMeta(
@@ -67,6 +72,7 @@ class TransferMeta {
         mimeType: j['mime'] as String? ?? 'application/octet-stream',
         kind: j['kind'] == 'image' ? TransferKind.image : TransferKind.file,
         imageIndex: j['imgIdx'] as int? ?? 0,
+        groupId: j['gid'] as String?,
       );
 }
 

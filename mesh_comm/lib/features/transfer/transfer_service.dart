@@ -197,6 +197,7 @@ class TransferService {
     TransferKind kind = TransferKind.file,
     int imageIndex = 0,
     int chunkSize = TransferChunkSize.ble,
+    String? groupId,
   }) async {
     final tid = _randomTid();
     final totalChunks = (data.length / chunkSize).ceil().clamp(1, 999999);
@@ -208,6 +209,7 @@ class TransferService {
       mimeType: mimeType,
       kind: kind,
       imageIndex: imageIndex,
+      groupId: groupId,
     );
     _log('[DIAG-TX] sendFile: tid=${tid.substring(0, 8)} file=$fileName size=${data.length} chunks=$totalChunks chunkSize=$chunkSize');
 

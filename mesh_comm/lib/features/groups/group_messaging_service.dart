@@ -119,19 +119,17 @@ class GroupMessagingService {
       if (ok) sent++;
     }
 
-    // 로컬 저장
-    if (sent > 0 || group.memberCount == 1) {
-      final msgId = MeshPacket.generateMsgId();
-      await _groupService.saveMessage(
-        msgId: msgId,
-        groupId: group.groupId,
-        senderId: myNodeId,
-        msgType: MsgType.groupMessage.value,
-        payload: payload,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
-        isOutgoing: true,
-      );
-    }
+    // 로컬 저장 (발신 메시지는 전달 성공 여부와 관계없이 항상 저장)
+    final msgId = MeshPacket.generateMsgId();
+    await _groupService.saveMessage(
+      msgId: msgId,
+      groupId: group.groupId,
+      senderId: myNodeId,
+      msgType: MsgType.groupMessage.value,
+      payload: payload,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      isOutgoing: true,
+    );
     return sent;
   }
 

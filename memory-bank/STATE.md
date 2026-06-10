@@ -2,10 +2,10 @@
 
 ## Current Wave
 
-- **Wave:** 3 — Android 실기기 테스트 + 버그 수정 계속
+- **Wave:** 4 — Group Chat 시스템 구현 (v1.2.A)
 - **Status:** Active
-- **Cache Status:** DIRTY (2026-06-09 수정 반영 필요)
-- **Last Checkpoint:** v1.0.X — BLE 크래시 수정 + LAN 안정화 + SCAN LAN 지원 (2026-06-09)
+- **Cache Status:** CLEAN
+- **Last Checkpoint:** v1.2.A — Group Chat 전면 구현 + S21/S26/PC 배포 완료 (2026-06-09)
 
 ## Wave History
 

@@ -141,6 +141,21 @@
 - DB 추가: `exportAllMessagesRaw()`, `importMessagesRaw()`, `deleteAllSavedContacts()`
 - git commit + push 완료 (hash: 66b6588)
 
+## Latest 2026-06-09 (v1.2.A — Group Chat)
+
+- **Group Chat 시스템 전면 구현 (Wave A+B+C)**
+- DB v10: `chat_groups`, `group_members`, `group_messages` 3 테이블 추가. `contacts.group_name` 리셋
+- 5 MsgType 추가: `groupInvite`(0x0D) ~ `groupLeave`(0x11)
+- `GroupService`: UUID v4 그룹 생성, 멤버 CRUD, 방장 승계, 메시지 저장
+- `GroupMessagingService`: 그룹 패킷 프로토콜. 초대/응답/메시지/멤버변경/나가기 스트림
+- `GroupChatScreen`: DB-backed. 발신자 이름 표시, 초대/추방/나가기 버튼 (방장만 추방)
+- `_DemoGroupChatScreen`: 데모 그룹채팅. 각 멤버별 "(Re MemberName-Me): text" 시뮬레이션
+- 연락처 팝업 "그룹 채팅에 초대" → 기존/신규 그룹 선택 다이얼로그
+- 홈 Groups 탭: `_ChatGroupList`/`_ChatGroupTile` (ChatGroup 기반)
+- 데모 그룹: `_demoSavedContacts`의 groupName으로 자동 생성 5종
+- **BUG FIX**: 데모 1:1 채팅 파일/이미지 Reply에 Re: 접두사 누락 → `fileName: null` 수정
+- 버전: `v1.2.A`, pubspec `1.2.0+50`. S21/S26/PC 배포 완료
+
 ## Current Focus
 
 - ✅ Phase-1 portrait shell: top transport menu, left filters, bottom navigation
