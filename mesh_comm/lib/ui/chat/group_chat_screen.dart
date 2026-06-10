@@ -487,6 +487,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       newLeaderId: newLeaderId,
     );
     await _groupService.removeMember(_group.groupId, myNodeId);
+    await _groupService.deleteGroup(_group.groupId);
     if (mounted) Navigator.pop(context);
   }
 
@@ -935,6 +936,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     },
                   ),
                   IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
+                    tooltip: '삭제',
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _deleteGroupFile(filePath, fileName);
+                    },
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
                     onPressed: () => Navigator.pop(ctx),
                   ),
@@ -947,12 +956,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  Future<void> _deleteGroupFile(String filePath, String fileName) async {
+    try {
+      await File(filePath).delete();
+      if (mounted) {
+        setState(() {
+          _filePaths.remove(fileName);
+          _fileKinds.remove(fileName);
+        });
+      }
+    } catch (e) {
+      _showMessage('삭제 실패: $e');
+    }
+  }
+
   Future<void> _showSaveDialog(String srcPath, String fileName) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('파일 저장'),
-        content: Text('$fileName\nDownloads 폴더에 저장하시겠습니까?'),
+        content: Text('$fileName을(를) 저장하시겠습니까?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -965,10 +988,25 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      final dest = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
-      final destPath = p.join(dest.path, fileName);
-      await File(srcPath).copy(destPath);
-      _showMessage('저장 완료: Downloads/$fileName');
+      final initialDir = p.dirname(srcPath);
+      String savedPath;
+      try {
+        final location = await getSaveLocation(
+          suggestedName: fileName,
+          initialDirectory: initialDir,
+        );
+        if (location == null || !mounted) return;
+        await File(srcPath).copy(location.path);
+        savedPath = location.path;
+      } catch (_) {
+        String? dirPath;
+        try { dirPath = await getDirectoryPath(initialDirectory: initialDir); } catch (_) {}
+        if (dirPath == null || !mounted) return;
+        final destPath = p.join(dirPath, fileName);
+        await File(srcPath).copy(destPath);
+        savedPath = destPath;
+      }
+      _showMessage('저장 완료: $savedPath');
     } catch (e) {
       _showMessage('저장 실패: $e');
     }

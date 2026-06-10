@@ -487,9 +487,26 @@ class _HomeScreenState extends State<HomeScreen> {
       final now = DateTime.now();
       final stamp =
           '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-      final file = File(p.join(backupDir.path, 'group_backup_$stamp.json'));
-      await file.writeAsString(json);
-      _showMessage('백업 완료: ${file.path}');
+      final suggestedName = 'group_backup_$stamp.json';
+      String savedPath;
+      try {
+        final location = await getSaveLocation(
+          suggestedName: suggestedName,
+          initialDirectory: backupDir.path,
+          acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        );
+        if (location == null || !mounted) return;
+        await File(location.path).writeAsString(json);
+        savedPath = location.path;
+      } catch (_) {
+        String? dirPath;
+        try { dirPath = await getDirectoryPath(initialDirectory: backupDir.path); } catch (_) {}
+        if (dirPath == null || !mounted) return;
+        final file = File(p.join(dirPath, suggestedName));
+        await file.writeAsString(json);
+        savedPath = file.path;
+      }
+      _showMessage('백업 완료: $savedPath');
     } catch (e) {
       _showMessage('백업 실패: $e');
     }
@@ -497,8 +514,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _restoreGroups() async {
     try {
+      final backupDir = await TransferStorageService.groupBackupDir();
       const typeGroup = XTypeGroup(label: 'JSON', extensions: ['json']);
-      final file = await openFile(acceptedTypeGroups: [typeGroup]);
+      final file = await openFile(
+        initialDirectory: backupDir.path,
+        acceptedTypeGroups: [typeGroup],
+      );
       if (file == null || !mounted) return;
       final json = await file.readAsString();
       final count = await _groupService.importGroupsFromJson(json);
