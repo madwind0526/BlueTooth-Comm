@@ -499,10 +499,8 @@ class _HomeScreenState extends State<HomeScreen> {
         await File(location.path).writeAsString(json);
         savedPath = location.path;
       } catch (_) {
-        String? dirPath;
-        try { dirPath = await getDirectoryPath(initialDirectory: backupDir.path); } catch (_) {}
-        if (dirPath == null || !mounted) return;
-        final file = File(p.join(dirPath, suggestedName));
+        // Android: getSaveLocation 미지원 → Group 폴더에 바로 저장 (폴더 선택창 없음)
+        final file = File(p.join(backupDir.path, suggestedName));
         await file.writeAsString(json);
         savedPath = file.path;
       }
@@ -1291,8 +1289,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('그룹 삭제'),
-            content: Text('${group.name} 그룹을 삭제하시겠습니까?'),
+            title: const Text('그룹 나가기'),
+            content: Text('${group.name} 그룹에서 나가시겠습니까?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -1301,12 +1299,22 @@ class _HomeScreenState extends State<HomeScreen> {
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('삭제'),
+                child: const Text('나가기'),
               ),
             ],
           ),
         );
         if (confirmed != true || !mounted) return;
+        final myNodeId = IdentityService().myNodeId;
+        Uint8List? newLeaderId;
+        if (group.isLeader(myNodeId)) {
+          newLeaderId = await _groupService.getNextLeader(group.groupId, myNodeId);
+          if (newLeaderId != null) {
+            await _groupService.setLeader(group.groupId, newLeaderId);
+          }
+        }
+        await _groupMessaging.broadcastLeave(group: group, newLeaderId: newLeaderId);
+        await _groupService.removeMember(group.groupId, myNodeId);
         await _groupService.deleteGroup(group.groupId);
         _loadChatGroups();
     }
@@ -1736,7 +1744,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _renameChatGroup(ChatGroup group) async {
     final name = await _askForText(
-      title: 'Group 이름 변경',
+      title: 'Group 이름 변경 (로컬)',
       label: '그룹 이름',
       initialValue: group.name,
       hint: '그룹 이름을 변경합니다.',
@@ -5344,7 +5352,7 @@ class _ChatGroupTile extends StatelessWidget {
             itemBuilder: (context) => const [
               PopupMenuItem(value: _GroupAction.viewMembers, child: Text('그룹원 보기')),
               PopupMenuDivider(),
-              PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경')),
+              PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경 (로컬)')),
               PopupMenuDivider(),
               PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
             ],

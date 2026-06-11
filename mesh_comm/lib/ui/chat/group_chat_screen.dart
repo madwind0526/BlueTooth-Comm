@@ -999,10 +999,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         await File(srcPath).copy(location.path);
         savedPath = location.path;
       } catch (_) {
-        String? dirPath;
-        try { dirPath = await getDirectoryPath(initialDirectory: initialDir); } catch (_) {}
-        if (dirPath == null || !mounted) return;
-        final destPath = p.join(dirPath, fileName);
+        // Android: getSaveLocation 미지원 → Downloads 폴더에 바로 저장
+        final dest = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
+        final destPath = p.join(dest.path, fileName);
         await File(srcPath).copy(destPath);
         savedPath = destPath;
       }
