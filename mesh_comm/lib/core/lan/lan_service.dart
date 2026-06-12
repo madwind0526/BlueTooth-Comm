@@ -44,6 +44,7 @@ class LanService {
   LanService._internal();
 
   bool _initialized = false;
+  bool _running = false;
   Uint8List? _myNodeId;
   void Function(MeshPacket packet, String peerId)? _onPacketReceived;
 
@@ -87,11 +88,12 @@ class LanService {
 
   Stream<List<String>> get connectedPeersStream => _peersController.stream;
 
-  List<String> get connectedPeerIds => List.unmodifiable(_peers.keys);
+  List<String> get connectedPeerIds =>
+      _running ? List.unmodifiable(_peers.keys) : const [];
 
-  int get connectedCount => _peers.length;
+  int get connectedCount => _running ? _peers.length : 0;
 
-  bool hasPeer(String nodeIdHex) => _peers.containsKey(nodeIdHex);
+  bool hasPeer(String nodeIdHex) => _running && _peers.containsKey(nodeIdHex);
 
   // ── 초기화 ──────────────────────────────────────────────────────────────────
 
@@ -109,11 +111,16 @@ class LanService {
   /// LAN 서비스를 시작(재시작)한다. init() 이후에만 유효.
   Future<void> start() async {
     if (_myNodeId == null) return;
+    if (_running) return;
+    _running = true;
     // Windows: stop() 직후 즉시 bind 하면 포트가 아직 해제 중일 수 있어 실패.
     // 짧은 대기 후 bind 시도.
     await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (!_running) return;
     await _startTcpServer();
+    if (!_running) return;
     await _startUdpSocket();
+    if (!_running) return;
     _startBeacon();
     _startHeartbeat();
     // 이전에 알고 있던 피어에 즉시 재연결 시도 (WiFi 토글 복구)
@@ -123,6 +130,7 @@ class LanService {
   /// LAN 서비스를 중단한다. start()로 재시작 가능.
   /// 주소 캐시(_peerAddressCache)는 보존 — start() 후 즉시 재연결에 사용.
   Future<void> stop() async {
+    _running = false;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _heartbeatWatchdog?.cancel();
@@ -156,6 +164,7 @@ class LanService {
   // ── 패킷 전송 ───────────────────────────────────────────────────────────────
 
   Future<bool> sendPacket(MeshPacket packet, String peerNodeIdHex) async {
+    if (!_running) return false;
     final socket = _peers[peerNodeIdHex];
     if (socket == null) return false;
     try {
@@ -173,6 +182,7 @@ class LanService {
 
   /// 연결된 모든 LAN 피어에게 패킷을 브로드캐스트한다.
   Future<void> broadcastPacket(MeshPacket packet) async {
+    if (!_running) return;
     final peerIds = List<String>.from(_peers.keys);
     await Future.wait(peerIds.map((id) => sendPacket(packet, id)));
   }
@@ -186,6 +196,11 @@ class LanService {
         LanConstants.tcpPort,
         shared: true,
       );
+      if (!_running) {
+        await _tcpServer?.close();
+        _tcpServer = null;
+        return;
+      }
       _tcpServer!.listen(_handleIncomingConnection, onError: (e) {
         _log('TCP server error: $e');
       });
@@ -196,11 +211,16 @@ class LanService {
   }
 
   void _handleIncomingConnection(Socket socket) {
+    if (!_running) {
+      socket.destroy();
+      return;
+    }
     _log('Incoming TCP from ${socket.remoteAddress.address}:${socket.remotePort}');
     _setupSocketListener(socket, null);
   }
 
   Future<void> _connectToPeer(LanPeer peer) async {
+    if (!_running) return;
     if (_peers.containsKey(peer.nodeIdHex)) return;
     if (_connecting.contains(peer.nodeIdHex)) return;
     _connecting.add(peer.nodeIdHex);
@@ -211,6 +231,10 @@ class LanService {
         peer.tcpPort,
         timeout: LanConstants.connectTimeout,
       );
+      if (!_running) {
+        socket.destroy();
+        return;
+      }
       _setupSocketListener(socket, peer.nodeIdHex);
       _log('Connected to ${peer.nodeIdHex} at ${peer.address.address}');
     } catch (e) {
@@ -221,11 +245,19 @@ class LanService {
   }
 
   void _setupSocketListener(Socket socket, String? knownNodeIdHex) {
+    if (!_running) {
+      socket.destroy();
+      return;
+    }
     final buffer = _ReceiveBuffer();
     String? resolvedId = knownNodeIdHex;
 
     socket.listen(
       (data) {
+        if (!_running) {
+          socket.destroy();
+          return;
+        }
         buffer.append(data);
         while (true) {
           final frame = buffer.tryReadFrame();
@@ -263,6 +295,10 @@ class LanService {
           // 처음 수신한 패킷의 senderId로 피어를 확인
           if (resolvedId == null) {
             resolvedId = _hexOf(packet.senderId);
+            if (!_running) {
+              socket.destroy();
+              return;
+            }
             if (!_peers.containsKey(resolvedId)) {
               _peers[resolvedId!] = socket;
               _buffers[resolvedId!] = buffer;
@@ -301,6 +337,10 @@ class LanService {
     );
 
     if (knownNodeIdHex != null) {
+      if (!_running) {
+        socket.destroy();
+        return;
+      }
       // 동시 오픈 레이스: incoming이 이미 등록됐으면 outgoing을 버린다.
       if (_peers.containsKey(knownNodeIdHex)) {
         _log('[DIAG-LAN] Outgoing duplicate discarded (incoming already registered): $knownNodeIdHex');
@@ -317,6 +357,7 @@ class LanService {
 
   /// 주소 캐시에 있는 피어에 즉시 재연결 시도 (start() 후 호출).
   void _reconnectCachedPeers() {
+    if (!_running) return;
     for (final peer in List<LanPeer>.from(_peerAddressCache.values)) {
       if (!_peers.containsKey(peer.nodeIdHex) &&
           !_connecting.contains(peer.nodeIdHex)) {
@@ -330,6 +371,7 @@ class LanService {
     _buffers.remove(nodeIdHex);
     _lastPongMs.remove(nodeIdHex);
     _notifyChange();
+    if (!_running) return;
     // 캐시에 주소가 있으면 exponential backoff 후 재연결
     final cached = _peerAddressCache[nodeIdHex];
     if (cached != null) {
@@ -339,7 +381,9 @@ class LanService {
       _reconnectAttempts[nodeIdHex] = attempt + 1;
       _log('Reconnect $nodeIdHex in ${delaySec}s (attempt ${attempt + 1})');
       Future<void>.delayed(Duration(seconds: delaySec), () {
-        if (!_peers.containsKey(nodeIdHex) && !_connecting.contains(nodeIdHex)) {
+        if (_running &&
+            !_peers.containsKey(nodeIdHex) &&
+            !_connecting.contains(nodeIdHex)) {
           _connectToPeer(cached);
         }
       });
@@ -354,6 +398,11 @@ class LanService {
         InternetAddress.anyIPv4,
         LanConstants.udpPort,
       );
+      if (!_running) {
+        _udpSocket?.close();
+        _udpSocket = null;
+        return;
+      }
       _udpSocket!.broadcastEnabled = true;
 
       // 모든 네트워크 인터페이스에 멀티캐스트 join.
@@ -386,6 +435,7 @@ class LanService {
       }
 
       _udpSocket!.listen((event) {
+        if (!_running) return;
         if (event == RawSocketEvent.read) {
           final dg = _udpSocket!.receive();
           if (dg != null) _handleBeacon(dg);
@@ -398,6 +448,7 @@ class LanService {
   }
 
   void _startBeacon() {
+    if (!_running) return;
     _sendBeacon();
     _beaconTimer = Timer.periodic(LanConstants.beaconInterval, (_) {
       _sendBeacon();
@@ -406,12 +457,14 @@ class LanService {
 
   /// LAN TCP Heartbeat — PING을 주기적으로 전송하고 무응답 피어를 제거한다.
   void _startHeartbeat() {
+    if (!_running) return;
     final pingFrame = _buildFrame(Uint8List.fromList([_hbMagic, _hbPingByte]));
 
     // PING 전송: 연결된 모든 피어에 주기적으로
     _heartbeatTimer = Timer.periodic(
       const Duration(seconds: _hbIntervalSec),
       (_) {
+        if (!_running) return;
         for (final entry in Map<String, Socket>.from(_peers).entries) {
           try {
             entry.value.add(pingFrame);
@@ -426,6 +479,7 @@ class LanService {
     _heartbeatWatchdog = Timer.periodic(
       const Duration(seconds: _hbIntervalSec),
       (_) {
+        if (!_running) return;
         final now = DateTime.now().millisecondsSinceEpoch;
         for (final peerId in List<String>.from(_peers.keys)) {
           final lastPong = _lastPongMs[peerId];
@@ -440,6 +494,7 @@ class LanService {
   }
 
   void _sendBeacon() {
+    if (!_running) return;
     if (_udpSocket == null || _myNodeId == null) return;
     final payload = jsonEncode({
       'magic': LanConstants.beaconMagic,
@@ -468,6 +523,7 @@ class LanService {
   }
 
   void _handleBeacon(Datagram dg) {
+    if (!_running) return;
     try {
       final raw = utf8.decode(dg.data);
       final map = jsonDecode(raw) as Map<String, dynamic>;

@@ -2437,6 +2437,8 @@ class _HomeScreenState extends State<HomeScreen> {
           onSelected: (filter) => setState(() => _filter = filter),
           onImport: _importContacts,
           onExport: _exportContacts,
+          lanEnabled: _lanEnabled,
+          bluetoothEnabled: _bluetoothEnabled,
           hasUnread1to1: _unreadCounts.values.any((c) => c > 0),
           hasUnreadGroup: _chatGroups.any((g) => g.unreadCount > 0),
         ),
@@ -2865,6 +2867,8 @@ class _FilterRail extends StatelessWidget {
   final ValueChanged<HomeFilter> onSelected;
   final VoidCallback onImport;
   final VoidCallback onExport;
+  final bool lanEnabled;
+  final bool bluetoothEnabled;
   final bool hasUnread1to1;
   final bool hasUnreadGroup;
 
@@ -2873,6 +2877,8 @@ class _FilterRail extends StatelessWidget {
     required this.onSelected,
     required this.onImport,
     required this.onExport,
+    required this.lanEnabled,
+    required this.bluetoothEnabled,
     this.hasUnread1to1 = false,
     this.hasUnreadGroup = false,
   });
@@ -2934,6 +2940,8 @@ class _FilterRail extends StatelessWidget {
           _ConnectionBadge(
             bleService: BleService(),
             messagingService: MessagingService(),
+            lanEnabled: lanEnabled,
+            bluetoothEnabled: bluetoothEnabled,
           ),
           const SizedBox(height: 8),
         ],
@@ -5827,10 +5835,14 @@ class _DemoGroupChatScreenState extends State<_DemoGroupChatScreen> {
 class _ConnectionBadge extends StatelessWidget {
   final BleService bleService;
   final MessagingService messagingService;
+  final bool lanEnabled;
+  final bool bluetoothEnabled;
 
   const _ConnectionBadge({
     required this.bleService,
     required this.messagingService,
+    required this.lanEnabled,
+    required this.bluetoothEnabled,
   });
 
   @override
@@ -5843,8 +5855,10 @@ class _ConnectionBadge extends StatelessWidget {
           stream: messagingService.lanPeersStream,
           initialData: const [],
           builder: (context, lanSnap) {
-            final bleCount = bleSnap.data?.length ?? 0;
-            final lanCount = lanSnap.data?.length ?? 0;
+            final bleCount = bluetoothEnabled
+                ? (bleSnap.data?.length ?? 0)
+                : 0;
+            final lanCount = lanEnabled ? (lanSnap.data?.length ?? 0) : 0;
             final total = bleCount + lanCount;
             final dotColor = total == 0 ? Colors.redAccent : Colors.greenAccent;
             final lanColor = lanCount > 0
