@@ -534,6 +534,7 @@ class DatabaseService {
 
   Future<int> deleteAllMessages() async {
     await _database.delete('seen_messages');
+    await _database.delete('notices');
     return _database.delete('messages');
   }
 

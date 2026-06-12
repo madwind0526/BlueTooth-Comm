@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io' show File, Platform, exit;
 import 'dart:math' as math;
 
@@ -103,20 +103,20 @@ class _HomeScreenState extends State<HomeScreen> {
   // 선택된 탭/아이콘 색상: dark=오렌지, light=딥오렌지
   static Color selectedColor(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? Colors.orange
-          : Colors.deepOrange;
+      ? Colors.orange
+      : Colors.deepOrange;
 
   // 상단 transport 버튼 ON 색상: dark=흰색, light=검정
   static Color transportOnColor(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? Colors.white
-          : Colors.grey.shade800;
+      ? Colors.white
+      : Colors.grey.shade800;
 
   // 상단 transport 버튼 OFF 색상
   static Color transportOffColor(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? Colors.grey.shade500
-          : Colors.grey.shade400;
+      ? Colors.grey.shade500
+      : Colors.grey.shade400;
 
   static const _alertChannel = MethodChannel('mesh_comm/alerts');
 
@@ -225,7 +225,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _incomingContactIds = TransferService().incomingContactIds;
-        if (event is TransferCompleted && event.direction == TransferDirection.incoming) {
+        if (event is TransferCompleted &&
+            event.direction == TransferDirection.incoming) {
           _unreadCounts[event.contactNodeIdHex] =
               (_unreadCounts[event.contactNodeIdHex] ?? 0) + 1;
         }
@@ -273,7 +274,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
       _loadChatGroups();
     });
-    _groupKickedSubscription = _groupMessaging.kickedFromGroupStream.listen((_) {
+    _groupKickedSubscription = _groupMessaging.kickedFromGroupStream.listen((
+      _,
+    ) {
       _loadChatGroups();
     });
   }
@@ -311,7 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _chatGroups = groups);
   }
 
-
   void _handleIncomingGroupInvite(GroupInvite invite) {
     if (!mounted) return;
     unawaited(_handleIncomingGroupInviteAsync(invite));
@@ -342,10 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // 다이얼로그가 완전히 닫힌 후 async 작업 수행
     if (accepted == true) {
       await _groupService.acceptInvite(invite);
-      await _groupService.addMember(
-        invite.groupId,
-        IdentityService().myNodeId,
-      );
+      await _groupService.addMember(invite.groupId, IdentityService().myNodeId);
       await _groupMessaging.sendInviteResponse(
         groupId: invite.groupId,
         toNodeId: invite.fromNodeId,
@@ -369,13 +368,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final nameController = TextEditingController();
     final selected = <String>{}; // nodeIdHex set
     ({String name, List<Contact> invitees})? result;
 
     await showDialog<void>(
       context: context,
       builder: (ctx) {
+        String groupName = '';
         String? errorMsg;
         return StatefulBuilder(
           builder: (ctx, setDlg) => AlertDialog(
@@ -387,97 +386,98 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text('새 그룹 만들기'),
                 const SizedBox(height: 8),
                 TextField(
-                  controller: nameController,
                   decoration: InputDecoration(
                     labelText: '그룹 이름',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     errorText: errorMsg,
                   ),
-                  onChanged: (_) => setDlg(() => errorMsg = null),
+                  onChanged: (value) => setDlg(() {
+                    groupName = value;
+                    errorMsg = null;
+                  }),
                 ),
               ],
             ),
-          content: SizedBox(
-            width: 300,
-            height: 320,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black38,
-                borderRadius: BorderRadius.circular(10),
+            content: SizedBox(
+              width: 300,
+              height: 320,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: contacts.length,
+                  itemBuilder: (_, i) {
+                    final c = contacts[i];
+                    final hex = c.nodeId
+                        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                        .join();
+                    final isChecked = selected.contains(hex);
+                    return CheckboxListTile(
+                      dense: true,
+                      value: isChecked,
+                      onChanged: (v) => setDlg(() {
+                        if (v == true) {
+                          selected.add(hex);
+                        } else {
+                          selected.remove(hex);
+                        }
+                      }),
+                      title: Text(
+                        contactDisplayName(c),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      subtitle: c.groupName != null
+                          ? Text(
+                              '[${c.groupName}]',
+                              style: const TextStyle(fontSize: 11),
+                            )
+                          : null,
+                      controlAffinity: ListTileControlAffinity.leading,
+                    );
+                  },
+                ),
               ),
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                itemCount: contacts.length,
-                itemBuilder: (_, i) {
-                  final c = contacts[i];
-                  final hex = c.nodeId
-                      .map((b) => b.toRadixString(16).padLeft(2, '0'))
-                      .join();
-                  final isChecked = selected.contains(hex);
-                  return CheckboxListTile(
-                    dense: true,
-                    value: isChecked,
-                    onChanged: (v) => setDlg(() {
-                      if (v == true) {
-                        selected.add(hex);
-                      } else {
-                        selected.remove(hex);
-                      }
-                    }),
-                    title: Text(
-                      contactDisplayName(c),
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                    subtitle: c.groupName != null
-                        ? Text(
-                            '[${c.groupName}]',
-                            style: const TextStyle(fontSize: 11),
-                          )
-                        : null,
-                    controlAffinity: ListTileControlAffinity.leading,
-                  );
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(ctx);
                 },
+                child: const Text('취소'),
               ),
-            ),
+              FilledButton(
+                onPressed: groupName.trim().isEmpty
+                    ? null
+                    : () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        final name = groupName.trim();
+                        if (_chatGroups.any((g) => g.name == name)) {
+                          setDlg(() => errorMsg = '그룹명이 있습니다');
+                          return;
+                        }
+                        result = (
+                          name: name,
+                          invitees: contacts.where((c) {
+                            final hex = c.nodeId
+                                .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                                .join();
+                            return selected.contains(hex);
+                          }).toList(),
+                        );
+                        Navigator.pop(ctx);
+                      },
+                child: const Text('만들기'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('취소'),
-            ),
-            FilledButton(
-              onPressed: nameController.text.trim().isEmpty
-                  ? null
-                  : () {
-                      final name = nameController.text.trim();
-                      if (_chatGroups.any((g) => g.name == name)) {
-                        setDlg(() => errorMsg = '그룹명이 있습니다');
-                        return;
-                      }
-                      result = (
-                        name: name,
-                        invitees: contacts
-                            .where((c) {
-                              final hex = c.nodeId
-                                  .map((b) =>
-                                      b.toRadixString(16).padLeft(2, '0'))
-                                  .join();
-                              return selected.contains(hex);
-                            })
-                            .toList(),
-                      );
-                      Navigator.pop(ctx);
-                    },
-              child: const Text('만들기'),
-            ),
-          ],
-        ),
-      );
+        );
       },
     );
-    nameController.dispose();
-
     // 다이얼로그가 완전히 닫힌 후 그룹 생성 작업 수행
     // (다이얼로그 exit 애니메이션 중 setState 호출을 방지)
     if (result != null && mounted) {
@@ -487,7 +487,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _doCreateGroup(String name, List<Contact> invitees) async {
     final myNodeId = IdentityService().myNodeId;
-    final group = await _groupService.createGroup(name: name, myNodeId: myNodeId);
+    final group = await _groupService.createGroup(
+      name: name,
+      myNodeId: myNodeId,
+    );
     for (final contact in invitees) {
       await _groupMessaging.sendInvite(
         group: group,
@@ -498,7 +501,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _showMessage('그룹 [$name]을(를) 만들었습니다. $count명에게 초대장을 보냈습니다.');
     _loadChatGroups();
   }
-
 
   Future<void> _backupGroups() async {
     try {
@@ -513,7 +515,9 @@ class _HomeScreenState extends State<HomeScreen> {
         content: json,
         suggestedName: filename,
         initialDirectory: backupDir.path,
-        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
       );
       if (saved == null || !mounted) return;
       _showMessage('백업 완료');
@@ -528,7 +532,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       final json = await PlatformFilePicker.openFileAsString(
         initialDirectory: backupDir.path,
-        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
         mimeType: 'application/json',
       );
       if (json == null || !mounted) return;
@@ -547,12 +553,16 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _notices
         ..clear()
-        ..addAll(rows.map((r) => _NoticeEntry(
+        ..addAll(
+          rows.map(
+            (r) => _NoticeEntry(
               senderName: r['sender_name'] as String,
               text: r['text'] as String,
               timestamp: r['timestamp'] as int,
               isLong: (r['is_long'] as int) == 1,
-            )));
+            ),
+          ),
+        );
     });
   }
 
@@ -651,8 +661,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _lanEnabled = enable;
       _transports = Map.of(_transports)
-        ..[TransportKind.lan] = _transports[TransportKind.lan]!
-            .copyWith(enabled: enable);
+        ..[TransportKind.lan] = _transports[TransportKind.lan]!.copyWith(
+          enabled: enable,
+        );
     });
     if (enable) {
       await MessagingService().startLan();
@@ -915,7 +926,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         dense: true,
                         title: Text(g.name),
                         subtitle: Text('${g.memberCount}명'),
-                        onTap: () => Navigator.pop(ctx, 'existing:${g.groupId}'),
+                        onTap: () =>
+                            Navigator.pop(ctx, 'existing:${g.groupId}'),
                       ),
                     ),
                     const Divider(),
@@ -932,7 +944,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       isDense: true,
                       border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) => Navigator.pop(ctx, 'new:${controller.text}'),
+                    onSubmitted: (_) =>
+                        Navigator.pop(ctx, 'new:${controller.text}'),
                   ),
                 ],
               ),
@@ -957,24 +970,40 @@ class _HomeScreenState extends State<HomeScreen> {
     if (result.startsWith('existing:')) {
       final groupId = result.substring('existing:'.length);
       final group = (_settings.demoMode ? _demoChatGroups : _chatGroups)
-          .firstWhere((g) => g.groupId == groupId, orElse: () => throw StateError('not found'));
+          .firstWhere(
+            (g) => g.groupId == groupId,
+            orElse: () => throw StateError('not found'),
+          );
       if (_settings.demoMode) {
-        _showMessage('${contactDisplayName(contact)}을(를) ${group.name}에 초대했습니다. (Demo)');
+        _showMessage(
+          '${contactDisplayName(contact)}을(를) ${group.name}에 초대했습니다. (Demo)',
+        );
         return;
       }
       // 수락 전에는 addMember 하지 않음 — _handleInviteResp에서 처리
-      await _groupMessaging.sendInvite(group: group, targetNodeId: contact.nodeId);
+      await _groupMessaging.sendInvite(
+        group: group,
+        targetNodeId: contact.nodeId,
+      );
       _showMessage('${contactDisplayName(contact)}에게 초대장을 보냈습니다.');
       _loadChatGroups();
     } else if (result.startsWith('new:')) {
       final name = result.substring('new:'.length).trim();
       if (name.isEmpty) return;
       if (_settings.demoMode) {
-        _showMessage('[$name] Demo 그룹에 ${contactDisplayName(contact)}을(를) 초대했습니다.');
+        _showMessage(
+          '[$name] Demo 그룹에 ${contactDisplayName(contact)}을(를) 초대했습니다.',
+        );
         return;
       }
-      final group = await _groupService.createGroup(name: name, myNodeId: myNodeId);
-      await _groupMessaging.sendInvite(group: group, targetNodeId: contact.nodeId);
+      final group = await _groupService.createGroup(
+        name: name,
+        myNodeId: myNodeId,
+      );
+      await _groupMessaging.sendInvite(
+        group: group,
+        targetNodeId: contact.nodeId,
+      );
       _loadChatGroups();
     }
   }
@@ -1284,10 +1313,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadContacts();
   }
 
-  Future<void> _handleGroupAction(
-    ChatGroup group,
-    _GroupAction action,
-  ) async {
+  Future<void> _handleGroupAction(ChatGroup group, _GroupAction action) async {
     if (_settings.demoMode) {
       await _handleDemoGroupAction(group, action);
       return;
@@ -1320,12 +1346,18 @@ class _HomeScreenState extends State<HomeScreen> {
         final myNodeId = IdentityService().myNodeId;
         Uint8List? newLeaderId;
         if (group.isLeader(myNodeId)) {
-          newLeaderId = await _groupService.getNextLeader(group.groupId, myNodeId);
+          newLeaderId = await _groupService.getNextLeader(
+            group.groupId,
+            myNodeId,
+          );
           if (newLeaderId != null) {
             await _groupService.setLeader(group.groupId, newLeaderId);
           }
         }
-        await _groupMessaging.broadcastLeave(group: group, newLeaderId: newLeaderId);
+        await _groupMessaging.broadcastLeave(
+          group: group,
+          newLeaderId: newLeaderId,
+        );
         await _groupService.removeMember(group.groupId, myNodeId);
         await _groupService.deleteGroup(group.groupId);
         _loadChatGroups();
@@ -1349,7 +1381,11 @@ class _HomeScreenState extends State<HomeScreen> {
         if (name == null || name.trim().isEmpty) return;
         setState(() {
           _demoChatGroups = _demoChatGroups
-              .map((g) => g.groupId == group.groupId ? g.copyWith(name: name.trim()) : g)
+              .map(
+                (g) => g.groupId == group.groupId
+                    ? g.copyWith(name: name.trim())
+                    : g,
+              )
               .toList();
         });
       case _GroupAction.delete:
@@ -1403,14 +1439,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(name, style: const TextStyle(fontSize: 14)),
                   trailing: isLeader
                       ? Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.orange.withAlpha(50),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Text(
                             '방장',
-                            style: TextStyle(fontSize: 11, color: Colors.orange),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.orange,
+                            ),
                           ),
                         )
                       : null,
@@ -1455,7 +1497,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final displayName = name.trim().isEmpty ? 'Me' : name.trim();
     await _saveSelfSettings(_settings.copyWith(displayName: displayName));
   }
-
 
   Future<void> _setContactAvatar(Contact contact) async {
     var selectedKey = contact.avatarKey ?? AvatarRegistry.defaultKey;
@@ -1750,7 +1791,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final myHex = IdentityService().myNodeId
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
-    if (hex == myHex) return _settings.displayName.isNotEmpty ? _settings.displayName : 'Me';
+    if (hex == myHex) {
+      return _settings.displayName.isNotEmpty ? _settings.displayName : 'Me';
+    }
     return hex.length >= 8 ? hex.substring(0, 8) : hex;
   }
 
@@ -1859,7 +1902,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete all messages'),
-        content: const Text('Delete all local message history?'),
+        content: const Text('Delete all local message history and notices?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1876,6 +1919,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final count = await DatabaseService().deleteAllMessages();
     await _loadChatContactCodes();
     await _loadUnreadCounts();
+    await _loadNotices();
     _showMessage('Deleted $count messages.');
   }
 
@@ -1895,10 +1939,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showExportDialog() async {
     final contacts = _savedContactsExcludingSelf();
-    final result = await showDialog<({List<Contact> contacts, bool includeConversations})>(
-      context: context,
-      builder: (context) => _ExportDialog(contacts: contacts),
-    );
+    final result =
+        await showDialog<({List<Contact> contacts, bool includeConversations})>(
+          context: context,
+          builder: (context) => _ExportDialog(contacts: contacts),
+        );
     if (result == null) return;
 
     final ts = DateTime.now().millisecondsSinceEpoch;
@@ -1907,7 +1952,9 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       // ── 연락처 파일 ────────────────────────────────────────────
       if (result.contacts.isNotEmpty) {
-        final json = await _contactFileService.exportContactsToJson(result.contacts);
+        final json = await _contactFileService.exportContactsToJson(
+          result.contacts,
+        );
         final name = 'mesh_comm_contacts_$ts.json';
         final path = await _saveJsonFile(json, name);
         if (path == null) return; // 사용자가 취소
@@ -1938,7 +1985,9 @@ class _HomeScreenState extends State<HomeScreen> {
       content: json,
       suggestedName: filename,
       initialDirectory: saveDir.path,
-      acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'JSON', extensions: ['json']),
+      ],
     );
   }
 
@@ -1955,17 +2004,23 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       final rawJson = await PlatformFilePicker.openFileAsString(
         initialDirectory: importDir.path,
-        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
         mimeType: 'application/json',
       );
       if (rawJson == null || !mounted) return;
 
       if (type == 'contacts') {
-        final count = await _contactFileService.importContactsFromBackupJson(rawJson);
+        final count = await _contactFileService.importContactsFromBackupJson(
+          rawJson,
+        );
         await _loadContacts();
         _showMessage('$count개 연락처를 가져왔습니다.');
       } else {
-        final count = await _contactFileService.importConversationsFromJson(rawJson);
+        final count = await _contactFileService.importConversationsFromJson(
+          rawJson,
+        );
         await _loadChatContactCodes();
         await _loadUnreadCounts();
         _showMessage('$count개 메시지를 가져왔습니다.');
@@ -2005,7 +2060,9 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final password = await _askIdentityBackupPassword(confirm: true);
       if (password == null) return;
-      final json = await _identityBackupService.exportToJson(password: password);
+      final json = await _identityBackupService.exportToJson(
+        password: password,
+      );
       final filename =
           'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.enc.json';
       final saveDir = await TransferStorageService.rootDownloadsDir();
@@ -2088,7 +2145,10 @@ class _HomeScreenState extends State<HomeScreen> {
         rawJson = await PlatformFilePicker.openFileAsString(
           initialDirectory: restoreDir.path,
           acceptedTypeGroups: const [
-            XTypeGroup(label: 'Encrypted MeshComm identity', extensions: ['json']),
+            XTypeGroup(
+              label: 'Encrypted MeshComm identity',
+              extensions: ['json'],
+            ),
           ],
           mimeType: 'application/json',
         );
@@ -2441,7 +2501,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: OutlinedButton.icon(
                             onPressed: _restoreGroups,
-                            icon: const Icon(Icons.restore_page_outlined, size: 18),
+                            icon: const Icon(
+                              Icons.restore_page_outlined,
+                              size: 18,
+                            ),
                             label: const FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text('Restore'),
@@ -2521,7 +2584,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 _ContactTile(
                   contact: contact,
                   unreadCount: _unreadCounts[contactCode(contact)] ?? 0,
-                  isReceiving: _incomingContactIds.contains(contactCode(contact)),
+                  isReceiving: _incomingContactIds.contains(
+                    contactCode(contact),
+                  ),
                   onTap: () => _openChat(contact),
                   onAction: (action) => _handleContactAction(contact, action),
                 ),
@@ -2938,7 +3003,11 @@ class _NoticeBoardView extends StatelessWidget {
                   color: Color(0xFFFF9800),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.campaign, color: Colors.white, size: 18),
+                child: const Icon(
+                  Icons.campaign,
+                  color: Colors.white,
+                  size: 18,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -2950,23 +3019,38 @@ class _NoticeBoardView extends StatelessWidget {
                         Expanded(
                           child: Text(
                             entry.senderName,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFFF9800).withAlpha(40),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             entry.isLong ? '공지L' : '공지S',
-                            style: const TextStyle(color: Color(0xFFFF9800), fontSize: 10),
+                            style: const TextStyle(
+                              color: Color(0xFFFF9800),
+                              fontSize: 10,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 6),
-                        Text(time, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                        Text(
+                          time,
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10,
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -3018,17 +3102,16 @@ class _FilterButton extends StatelessWidget {
                 children: [
                   Icon(icon, color: color, size: 20),
                   if (hasUnread)
-                    const Positioned(
-                      right: -4,
-                      top: -3,
-                      child: _PulsingDot(),
-                    ),
+                    const Positioned(right: -4, top: -3, child: _PulsingDot()),
                 ],
               ),
               const SizedBox(height: 3),
               FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Text(label, style: TextStyle(color: color, fontSize: 10)),
+                child: Text(
+                  label,
+                  style: TextStyle(color: color, fontSize: 10),
+                ),
               ),
             ],
           ),
@@ -3057,9 +3140,10 @@ class _PulsingDotState extends State<_PulsingDot>
       vsync: this,
       duration: const Duration(milliseconds: 700),
     )..repeat(reverse: true);
-    _anim = Tween<double>(begin: 0.25, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
-    );
+    _anim = Tween<double>(
+      begin: 0.25,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
   }
 
   @override
@@ -3209,10 +3293,7 @@ class _ContactTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (unreadCount > 0) _UnreadBadge(count: unreadCount),
-          if (isReceiving) ...[
-            const _BlinkingDot(),
-            const SizedBox(width: 2),
-          ],
+          if (isReceiving) ...[const _BlinkingDot(), const SizedBox(width: 2)],
           PopupMenuButton<_ContactAction>(
             tooltip: '연락처 메뉴',
             onSelected: onAction,
@@ -3628,7 +3709,8 @@ class _ScanMapCardState extends State<_ScanMapCard> {
           center.dx + math.cos(angle) * radius,
           center.dy + math.sin(angle) * radius,
         );
-        final isLive = !isSelf && MessagingService().isDirectlyConnected(graphNode.id);
+        final isLive =
+            !isSelf && MessagingService().isDirectlyConnected(graphNode.id);
         indexById[graphNode.id] = scanNodes.length;
         scanNodes.add(
           _ScanMapNode(
@@ -4618,11 +4700,21 @@ class _ScanMapNodeButtonState extends State<_ScanMapNodeButton>
   bool get _shouldPulse => !widget.node.isMe && !widget.node.isSavedContact;
 
   Color _nodeColor(BuildContext context) {
-    if (widget.node.isMe) return _roleColor(context, userLevel: widget.node.userLevel, isSelf: true);
+    if (widget.node.isMe) {
+      return _roleColor(
+        context,
+        userLevel: widget.node.userLevel,
+        isSelf: true,
+      );
+    }
     if (widget.node.userLevel == UserLevel.creator ||
         widget.node.userLevel == UserLevel.builder ||
         widget.node.userLevel == UserLevel.admin) {
-      return _roleColor(context, userLevel: widget.node.userLevel, isSelf: false);
+      return _roleColor(
+        context,
+        userLevel: widget.node.userLevel,
+        isSelf: false,
+      );
     }
     if (widget.node.isLive) return _liveUserColor;
     return _roleColor(context, userLevel: widget.node.userLevel, isSelf: false);
@@ -4845,7 +4937,11 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     });
   }
 
-  void _send({String? overrideText, _DemoChatItemType type = _DemoChatItemType.text, String? fileName}) {
+  void _send({
+    String? overrideText,
+    _DemoChatItemType type = _DemoChatItemType.text,
+    String? fileName,
+  }) {
     final text = overrideText ?? _controller.text.trim();
     if (text.isEmpty && type == _DemoChatItemType.text) return;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -4875,7 +4971,8 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
         ),
       );
       if (!_mode.isNotice) {
-        final replyText = '(Re: "$_selfName"-"$_contactName") ${text.isNotEmpty ? text : (fileName ?? "파일")}';
+        final replyText =
+            '(Re: "$_selfName"-"$_contactName") ${text.isNotEmpty ? text : (fileName ?? "파일")}';
         _messages.add(
           _DemoChatMessage(
             text: replyText,
@@ -4956,7 +5053,10 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
               backgroundColor: const Color(0xFF2D2858),
               child: Text(
                 _contactName.isNotEmpty ? _contactName[0].toUpperCase() : '?',
-                style: const TextStyle(color: Color(0xFFFF9800), fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Color(0xFFFF9800),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -4967,10 +5067,17 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
                 children: [
                   Text(
                     _contactName,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _textPrimary),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: _textPrimary,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const Text('Demo', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
+                  const Text(
+                    'Demo',
+                    style: TextStyle(fontSize: 11, color: Color(0xFFFF9800)),
+                  ),
                 ],
               ),
             ),
@@ -4981,12 +5088,21 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
         children: [
           Expanded(
             child: _messages.isEmpty
-                ? const Center(child: Text('메시지를 입력하세요.', style: TextStyle(color: _textSecondary, fontSize: 14)))
+                ? const Center(
+                    child: Text(
+                      '메시지를 입력하세요.',
+                      style: TextStyle(color: _textSecondary, fontSize: 14),
+                    ),
+                  )
                 : ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
                     itemCount: _messages.length,
-                    itemBuilder: (context, index) => _buildBubble(context, _messages[index]),
+                    itemBuilder: (context, index) =>
+                        _buildBubble(context, _messages[index]),
                   ),
           ),
           _buildInputBar(),
@@ -5023,25 +5139,34 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
                   isExpanded: true,
                   dropdownColor: _incomingBubble,
                   selectedItemBuilder: (context) => _dropdownItems
-                      .map((item) => Align(
-                            alignment: Alignment.center,
+                      .map(
+                        (item) => Align(
+                          alignment: Alignment.center,
+                          child: Text(
+                            item.$1,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _textPrimary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  items: _dropdownItems
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item.$2,
+                          child: Center(
                             child: Text(
                               item.$1,
                               textAlign: TextAlign.center,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: _textPrimary, fontSize: 12),
+                              style: const TextStyle(color: _textPrimary),
                             ),
-                          ))
-                      .toList(),
-                  items: _dropdownItems
-                      .map((item) => DropdownMenuItem(
-                            value: item.$2,
-                            child: Center(
-                              child: Text(item.$1,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(color: _textPrimary)),
-                            ),
-                          ))
+                          ),
+                        ),
+                      )
                       .toList(),
                   onChanged: _onDropdownChanged,
                 ),
@@ -5074,14 +5199,20 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
                       counterText: '',
                       filled: true,
                       fillColor: const Color(0xFF0F0F1E),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
                         borderSide: BorderSide.none,
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
-                        borderSide: const BorderSide(color: _outgoingBubble, width: 1.5),
+                        borderSide: const BorderSide(
+                          color: _outgoingBubble,
+                          width: 1.5,
+                        ),
                       ),
                     ),
                   ),
@@ -5099,7 +5230,9 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
                   child: IconButton(
                     onPressed: hasText ? _send : null,
                     style: IconButton.styleFrom(
-                      backgroundColor: hasText ? _outgoingBubble : const Color(0xFF2A2A3E),
+                      backgroundColor: hasText
+                          ? _outgoingBubble
+                          : const Color(0xFF2A2A3E),
                       foregroundColor: _textPrimary,
                       padding: const EdgeInsets.all(12),
                       minimumSize: const Size(44, 44),
@@ -5121,7 +5254,8 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
 
     // 파일/이미지 아이콘 포함 내용
     Widget innerContent;
-    if (msg.type == _DemoChatItemType.file || msg.type == _DemoChatItemType.image) {
+    if (msg.type == _DemoChatItemType.file ||
+        msg.type == _DemoChatItemType.image) {
       final icon = msg.type == _DemoChatItemType.image
           ? Icons.image_outlined
           : Icons.insert_drive_file_outlined;
@@ -5133,7 +5267,11 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
           Flexible(
             child: Text(
               msg.fileName ?? msg.text,
-              style: const TextStyle(color: _textPrimary, fontSize: 15, height: 1.4),
+              style: const TextStyle(
+                color: _textPrimary,
+                fontSize: 15,
+                height: 1.4,
+              ),
             ),
           ),
         ],
@@ -5148,17 +5286,26 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Column(
-        crossAxisAlignment: isOutgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isOutgoing
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: isOutgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: isOutgoing
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (!isOutgoing) const SizedBox(width: 4),
               Flexible(
                 child: Container(
-                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width * 0.72,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: isOutgoing ? _outgoingBubble : _incomingBubble,
                     borderRadius: BorderRadius.only(
@@ -5176,7 +5323,10 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
                       const SizedBox(height: 4),
                       Text(
                         _formatTime(msg.timestamp),
-                        style: TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153)),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _textPrimary.withAlpha(153),
+                        ),
                       ),
                     ],
                   ),
@@ -5195,7 +5345,6 @@ class _DemoChatScreenState extends State<_DemoChatScreen> {
     return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
-
 
 class _ThinDeviceIcon extends StatelessWidget {
   final MeshDeviceType type;
@@ -5400,11 +5549,20 @@ class _ChatGroupTile extends StatelessWidget {
             tooltip: 'Group 메뉴',
             onSelected: onAction,
             itemBuilder: (context) => const [
-              PopupMenuItem(value: _GroupAction.viewMembers, child: Text('그룹원 보기')),
+              PopupMenuItem(
+                value: _GroupAction.viewMembers,
+                child: Text('그룹원 보기'),
+              ),
               PopupMenuDivider(),
-              PopupMenuItem(value: _GroupAction.rename, child: Text('이름 변경 (로컬)')),
+              PopupMenuItem(
+                value: _GroupAction.rename,
+                child: Text('이름 변경 (로컬)'),
+              ),
               PopupMenuDivider(),
-              PopupMenuItem(value: _GroupAction.delete, child: Text('그룹 나가기/삭제')),
+              PopupMenuItem(
+                value: _GroupAction.delete,
+                child: Text('그룹 나가기/삭제'),
+              ),
             ],
           ),
         ],
@@ -5462,7 +5620,9 @@ class _DemoGroupChatScreenState extends State<_DemoGroupChatScreen> {
   String _nameForNodeId(Uint8List nodeId) {
     final hex = nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     for (final c in widget.allContacts) {
-      final cHex = c.nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      final cHex = c.nodeId
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
       if (cHex == hex) return c.displayName ?? hex.substring(0, 6);
     }
     return hex.substring(0, 6);
@@ -5472,9 +5632,7 @@ class _DemoGroupChatScreenState extends State<_DemoGroupChatScreen> {
     final selfHex = widget.self.nodeId
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
-    return widget.group.members
-        .where((m) => m.nodeIdHex != selfHex)
-        .toList();
+    return widget.group.members.where((m) => m.nodeIdHex != selfHex).toList();
   }
 
   @override
@@ -5490,23 +5648,27 @@ class _DemoGroupChatScreenState extends State<_DemoGroupChatScreen> {
     final now = DateTime.now().millisecondsSinceEpoch;
     final displayText = content.isNotEmpty ? content : (fileName ?? '파일');
     setState(() {
-      _messages.add(_DemoGroupMsg(
-        text: displayText,
-        senderLabel: _selfName,
-        timestamp: now,
-        isOutgoing: true,
-        fileName: fileName,
-      ));
+      _messages.add(
+        _DemoGroupMsg(
+          text: displayText,
+          senderLabel: _selfName,
+          timestamp: now,
+          isOutgoing: true,
+          fileName: fileName,
+        ),
+      );
       for (final member in _otherMembers) {
         final memberName = _nameForNodeId(member.nodeId);
         final replyText = '(Re $memberName-$_selfName): $displayText';
-        _messages.add(_DemoGroupMsg(
-          text: replyText,
-          senderLabel: memberName,
-          timestamp: now + 300,
-          isOutgoing: false,
-          fileName: null,
-        ));
+        _messages.add(
+          _DemoGroupMsg(
+            text: replyText,
+            senderLabel: memberName,
+            timestamp: now + 300,
+            isOutgoing: false,
+            fileName: null,
+          ),
+        );
       }
       _controller.clear();
     });
@@ -5685,8 +5847,12 @@ class _ConnectionBadge extends StatelessWidget {
             final lanCount = lanSnap.data?.length ?? 0;
             final total = bleCount + lanCount;
             final dotColor = total == 0 ? Colors.redAccent : Colors.greenAccent;
-            final lanColor = lanCount > 0 ? Colors.greenAccent : Colors.redAccent;
-            final bleColor = bleCount > 0 ? Colors.greenAccent : Colors.redAccent;
+            final lanColor = lanCount > 0
+                ? Colors.greenAccent
+                : Colors.redAccent;
+            final bleColor = bleCount > 0
+                ? Colors.greenAccent
+                : Colors.redAccent;
 
             String fmt(int n) => n >= 9 ? '9+' : '$n';
 
@@ -5979,7 +6145,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                             Expanded(
                               child: OutlinedButton.icon(
                                 onPressed: widget.onBackupIdentity,
-                                icon: const Icon(Icons.backup_outlined, size: 18),
+                                icon: const Icon(
+                                  Icons.backup_outlined,
+                                  size: 18,
+                                ),
                                 label: const FittedBox(
                                   fit: BoxFit.scaleDown,
                                   child: Text('Backup'),
@@ -5990,7 +6159,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                             Expanded(
                               child: OutlinedButton.icon(
                                 onPressed: widget.onRestoreIdentity,
-                                icon: const Icon(Icons.restore_page_outlined, size: 18),
+                                icon: const Icon(
+                                  Icons.restore_page_outlined,
+                                  size: 18,
+                                ),
                                 label: const FittedBox(
                                   fit: BoxFit.scaleDown,
                                   child: Text('Restore'),
@@ -6173,9 +6345,9 @@ class _ExportDialogState extends State<_ExportDialog> {
         FilledButton(
           onPressed: _canExport
               ? () => Navigator.pop(context, (
-                    contacts: _includeContacts ? widget.contacts : <Contact>[],
-                    includeConversations: _includeConversations,
-                  ))
+                  contacts: _includeContacts ? widget.contacts : <Contact>[],
+                  includeConversations: _includeConversations,
+                ))
               : null,
           child: const Text('Export'),
         ),
@@ -6313,9 +6485,9 @@ class _NoticeSendDialogState extends State<_NoticeSendDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _sending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('공지 전송 오류: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('공지 전송 오류: $e')));
     }
   }
 
@@ -6337,81 +6509,102 @@ class _NoticeSendDialogState extends State<_NoticeSendDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final maxDialogHeight = (media.size.height * 0.52).clamp(280.0, 430.0);
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(24),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A2E).withAlpha(235),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white12),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              '공지 보내기',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _NoticeModeCard(
-                    label: '공지S',
-                    description: '연락처 전송',
-                    cooldown: _cooldownStr(MessageSendMode.shortNotice),
-                    selected: _mode == MessageSendMode.shortNotice,
-                    onTap: () => setState(() => _mode = MessageSendMode.shortNotice),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxDialogHeight),
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A2E).withAlpha(235),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white12),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    '공지 보내기',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _NoticeModeCard(
-                    label: '공지L',
-                    description: '전체 mesh 전송',
-                    cooldown: _cooldownStr(MessageSendMode.longNotice),
-                    selected: _mode == MessageSendMode.longNotice,
-                    onTap: () => setState(() => _mode = MessageSendMode.longNotice),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _NoticeModeCard(
+                          label: '공지S',
+                          description: '연락처 전송',
+                          cooldown: _cooldownStr(MessageSendMode.shortNotice),
+                          selected: _mode == MessageSendMode.shortNotice,
+                          onTap: () => setState(
+                            () => _mode = MessageSendMode.shortNotice,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _NoticeModeCard(
+                          label: '공지L',
+                          description: '전체 mesh 전송',
+                          cooldown: _cooldownStr(MessageSendMode.longNotice),
+                          selected: _mode == MessageSendMode.longNotice,
+                          onTap: () => setState(
+                            () => _mode = MessageSendMode.longNotice,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _controller,
+                    autofocus: true,
+                    maxLength: 50,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      hintText: '공지 내용 입력',
+                      border: OutlineInputBorder(),
+                      filled: true,
+                      fillColor: Colors.white10,
+                      counterStyle: TextStyle(color: Colors.white54),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('취소'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _sending ? null : _send,
+                        child: _sending
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('전송'),
+                      ),
+                    ],
+                  ),
+                ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              maxLength: 50,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: '공지 내용 입력',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white10,
-                counterStyle: TextStyle(color: Colors.white54),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('취소'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _sending ? null : _send,
-                  child: _sending
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('전송'),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
