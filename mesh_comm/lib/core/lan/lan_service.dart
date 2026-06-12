@@ -181,10 +181,12 @@ class LanService {
   }
 
   /// 연결된 모든 LAN 피어에게 패킷을 브로드캐스트한다.
-  Future<void> broadcastPacket(MeshPacket packet) async {
-    if (!_running) return;
+  Future<int> broadcastPacket(MeshPacket packet) async {
+    if (!_running) return 0;
     final peerIds = List<String>.from(_peers.keys);
-    await Future.wait(peerIds.map((id) => sendPacket(packet, id)));
+    if (peerIds.isEmpty) return 0;
+    final results = await Future.wait(peerIds.map((id) => sendPacket(packet, id)));
+    return results.where((sent) => sent).length;
   }
 
   // ── TCP 서버 ─────────────────────────────────────────────────────────────────

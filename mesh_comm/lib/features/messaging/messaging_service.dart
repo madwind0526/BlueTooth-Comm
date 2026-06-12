@@ -396,7 +396,10 @@ class MessagingService {
       packet.signature = signature;
 
       // 4. 브로드캐스트 전송
-      final recipientCount = await _broadcastPacketWithRetry(packet);
+      final recipientCount = await _sendPacketToNodeIdCount(
+        packet,
+        _hex(targetNodeId),
+      );
       if (recipientCount == 0) {
         _log('TEXT 전송 실패: 연결된 BLE 이웃이 없습니다.');
         return false;
@@ -585,7 +588,10 @@ class MessagingService {
       _identity.myPrivateKeySeed,
     );
 
-    final recipientCount = await _broadcastPacketWithRetry(packet);
+    final recipientCount = await _sendPacketToNodeIdCount(
+      packet,
+      _hex(targetNodeId),
+    );
     if (recipientCount == 0) return false;
 
     await _db.saveMessage(
@@ -688,7 +694,10 @@ class MessagingService {
         packet.toSignableBytes(),
         _identity.myPrivateKeySeed,
       );
-      final recipientCount = await _broadcastPacketWithRetry(packet);
+      final recipientCount = await _sendPacketToNodeIdCount(
+        packet,
+        _hex(targetNodeId),
+      );
       _log(
         'LEVEL_CHANGE request target=${_hexShort(targetNodeId)} '
         'level=${level.label} recipients=$recipientCount',
@@ -705,18 +714,19 @@ class MessagingService {
     String? excludeDeviceId,
   }) async {
     // LAN 브로드캐스트 (dedup은 seen_messages에서 처리됨)
-    unawaited(_lan.broadcastPacket(packet));
+    final lanFuture = _lan.broadcastPacket(packet);
 
-    var recipientCount = 0;
+    var bleRecipientCount = 0;
     for (var attempt = 0; attempt < 3; attempt++) {
-      recipientCount = await _ble.broadcastPacket(
+      bleRecipientCount = await _ble.broadcastPacket(
         packet,
         excludeDeviceId: excludeDeviceId,
       );
-      if (recipientCount > 0) return recipientCount;
+      if (bleRecipientCount > 0) break;
       await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
     }
-    return recipientCount;
+    final lanRecipientCount = await lanFuture;
+    return lanRecipientCount + bleRecipientCount;
   }
 
   Future<void> broadcastKeyAnnounce({bool force = false}) async {
@@ -749,8 +759,9 @@ class MessagingService {
   Future<void> _broadcastKeyAnnounceNow() async {
     try {
       final packet = await _identity.createKeyAnnouncePacket();
-      unawaited(_lan.broadcastPacket(packet));
-      final recipientCount = await _ble.broadcastPacket(packet);
+      final lanFuture = _lan.broadcastPacket(packet);
+      final bleRecipientCount = await _ble.broadcastPacket(packet);
+      final recipientCount = await lanFuture + bleRecipientCount;
       _log('KEY_ANNOUNCE 브로드캐스트 완료: $recipientCount개 이웃 (LAN 포함)');
     } catch (e) {
       _log('broadcastKeyAnnounce 오류: $e');
@@ -759,12 +770,30 @@ class MessagingService {
 
   /// 특정 nodeIdHex에게 직접 패킷을 전송한다. LAN 우선, 없으면 BLE.
   Future<void> _sendPacketToNodeId(MeshPacket packet, String targetNodeIdHex) async {
+    await _sendPacketToNodeIdCount(packet, targetNodeIdHex);
+  }
+
+  Future<int> _sendPacketToNodeIdCount(
+    MeshPacket packet,
+    String targetNodeIdHex,
+  ) async {
     final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
-    if (!lanSent) {
-      // BLE는 deviceId(MAC)로 전송하므로 nodeIdHex → contactService에서 매핑 필요.
-      // 현재는 broadcastPacket으로 폴백한다 (seen_messages dedup으로 중복 방지).
-      await _ble.broadcastPacket(packet);
+    if (lanSent) return 1;
+
+    final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
+    if (bleDeviceId != null) {
+      final bleSent = await _ble.sendPacket(packet, bleDeviceId);
+      return bleSent ? 1 : 0;
     }
+
+    return _broadcastPacketWithRetry(packet);
+  }
+
+  String? _bleDeviceIdForNode(String nodeIdHex) {
+    for (final entry in _deviceToNodeHex.entries) {
+      if (entry.value == nodeIdHex) return entry.key;
+    }
+    return null;
   }
 
   /// 파일 또는 이미지를 지정한 연락처에게 전송한다. 직접 연결 시에만 허용한다.
@@ -1030,17 +1059,18 @@ class MessagingService {
     MeshPacket packet, {
     String? excludeDeviceId,
   }) async {
-    unawaited(_lan.broadcastPacket(packet));
-    var recipientCount = 0;
+    final lanFuture = _lan.broadcastPacket(packet);
+    var bleRecipientCount = 0;
     for (var attempt = 0; attempt < 3; attempt++) {
-      recipientCount = await _ble.broadcastPacket(
+      bleRecipientCount = await _ble.broadcastPacket(
         packet,
         excludeDeviceId: excludeDeviceId,
       );
-      if (recipientCount > 0) return recipientCount;
+      if (bleRecipientCount > 0) break;
       await Future<void>.delayed(Duration(milliseconds: 120 * (attempt + 1)));
     }
-    return recipientCount;
+    final lanRecipientCount = await lanFuture;
+    return lanRecipientCount + bleRecipientCount;
   }
 
   // ── TEXT 패킷 처리 ────────────────────────────────────────────────────────────
@@ -1244,7 +1274,10 @@ class MessagingService {
       responsePacket.toSignableBytes(),
       _identity.myPrivateKeySeed,
     );
-    final recipientCount = await _broadcastPacketWithRetry(responsePacket);
+    final recipientCount = await _sendPacketToNodeIdCount(
+      responsePacket,
+      _hex(packet.senderId),
+    );
     _log(
       'TOPOLOGY_RESPONSE sent request=${request.requestId.substring(0, 8)} '
       'neighbors=${contacts.length} recipients=$recipientCount',
@@ -1472,8 +1505,11 @@ class MessagingService {
         packet.toSignableBytes(),
         _identity.myPrivateKeySeed,
       );
-      await _broadcastPacketWithRetry(packet);
-      return true;
+      final recipientCount = await _sendPacketToNodeIdCount(
+        packet,
+        _hex(targetNodeId),
+      );
+      return recipientCount > 0;
     } catch (e) {
       _log('sendGroupControlPacket error: $e');
       return false;
