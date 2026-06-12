@@ -23,6 +23,11 @@ class TransferStorageService {
   /// Android: Documents → Downloads → app docs 순으로 폴백
   /// Windows: Documents\Mesh-comm\
   static Future<Directory> meshCommPublicDir({String sub = ''}) async {
+    // sub은 '/' 구분자 사용 (e.g. 'Personal/Downloads/sent')
+    // p.joinAll로 분해하면 Windows에서 자동으로 '\' 로 합쳐짐
+    List<String> _subParts() =>
+        sub.isEmpty ? [] : sub.split('/').where((s) => s.isNotEmpty).toList();
+
     if (Platform.isAndroid) {
       final extDir = await getExternalStorageDirectory();
       if (extDir != null) {
@@ -31,9 +36,9 @@ class TransferStorageService {
         final storageRoot = extDir.parent.parent.parent.parent.path;
         for (final folder in ['Documents', 'Downloads']) {
           try {
-            final target = sub.isEmpty
-                ? Directory(p.join(storageRoot, folder, 'Mesh-comm'))
-                : Directory(p.join(storageRoot, folder, 'Mesh-comm', sub));
+            final target = Directory(
+              p.joinAll([storageRoot, folder, 'Mesh-comm', ..._subParts()]),
+            );
             await target.create(recursive: true);
             final probe = File(p.join(target.path, '.probe'));
             await probe.writeAsString('x');
@@ -47,17 +52,17 @@ class TransferStorageService {
     } else {
       // Windows: C:\Users\<user>\Documents\Mesh-comm\
       final docs = await getApplicationDocumentsDirectory();
-      final target = sub.isEmpty
-          ? Directory(p.join(docs.path, 'Mesh-comm'))
-          : Directory(p.join(docs.path, 'Mesh-comm', sub));
+      final target = Directory(
+        p.joinAll([docs.path, 'Mesh-comm', ..._subParts()]),
+      );
       if (!await target.exists()) await target.create(recursive: true);
       return target;
     }
     // 최후 폴백: 앱 내부 documents
     final appDocs = await getApplicationDocumentsDirectory();
-    final target = sub.isEmpty
-        ? Directory(p.join(appDocs.path, 'Mesh-comm'))
-        : Directory(p.join(appDocs.path, 'Mesh-comm', sub));
+    final target = Directory(
+      p.joinAll([appDocs.path, 'Mesh-comm', ..._subParts()]),
+    );
     if (!await target.exists()) await target.create(recursive: true);
     return target;
   }
