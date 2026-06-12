@@ -156,6 +156,7 @@ class MessagingService {
 
   // BLE deviceId → nodeId hex (직접 연결된 이웃 추적)
   final Map<String, String> _deviceToNodeHex = {};
+  final Map<String, int> _lanRetryAfterMs = {};
 
   // seen_messages 정리 타이머 (R-09: 30분 주기)
   Timer? _cleanSeenTimer;
@@ -253,6 +254,9 @@ class MessagingService {
     _lanConnectionSubscription = _lan.connectedPeersStream.listen((peerIds) {
       final current = peerIds.toSet();
       final hasNew = current.difference(_knownLanPeerIds).isNotEmpty;
+      for (final peerId in current) {
+        _lanRetryAfterMs.remove(peerId);
+      }
       _knownLanPeerIds = current;
       if (hasNew) {
         // 새 LAN 피어가 연결되면 즉시 키를 알린다.
@@ -777,8 +781,17 @@ class MessagingService {
     MeshPacket packet,
     String targetNodeIdHex,
   ) async {
-    final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
-    if (lanSent) return 1;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final lanRetryAfter = _lanRetryAfterMs[targetNodeIdHex] ?? 0;
+    if (_lan.hasPeer(targetNodeIdHex) && nowMs >= lanRetryAfter) {
+      final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
+      if (lanSent) {
+        _lanRetryAfterMs.remove(targetNodeIdHex);
+        return 1;
+      }
+      _lanRetryAfterMs[targetNodeIdHex] =
+          nowMs + const Duration(seconds: 5).inMilliseconds;
+    }
 
     final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
     if (bleDeviceId != null) {
@@ -1552,6 +1565,7 @@ class MessagingService {
     _lanKeepaliveTimer = null;
     _lastKeyAnnounceAt = null;
     _keyAnnounceInFlight = null;
+    _lanRetryAfterMs.clear();
     await _connectionSubscription?.cancel();
     _connectionSubscription = null;
     await _lanConnectionSubscription?.cancel();
