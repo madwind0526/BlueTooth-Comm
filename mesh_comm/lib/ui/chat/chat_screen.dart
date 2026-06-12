@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
@@ -911,27 +912,42 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _saveFile(_CompletedFile file) async {
     if (file.data == null) return;
+    final sub = file.direction == TransferDirection.outgoing ? 'sent' : 'received';
+    final destDir = await TransferStorageService.personalDownloadDir(sub: sub);
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('파일 저장'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(destDir.path, style: const TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인')),
+        ],
+      ),
+    ) ?? false;
+    if (!confirmed || !mounted) return;
     try {
-      String savedPath;
-      if (Platform.isAndroid) {
-        // Android: Documents/Mesh-comm/Downloads/ 에 저장
-        final dir = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
-        final destFile = File('${dir.path}/${file.meta.fileName}');
-        await destFile.writeAsBytes(file.data!);
-        savedPath = destFile.path;
-      } else {
-        // Windows/기타: 파일 저장 다이얼로그
-        final location = await getSaveLocation(
-          suggestedName: file.meta.fileName,
-          acceptedTypeGroups: const [XTypeGroup(label: 'all')],
-        );
-        if (location == null) return;
-        await File(location.path).writeAsBytes(file.data!);
-        savedPath = location.path;
-      }
+      final destPath = p.join(destDir.path, file.meta.fileName);
+      await File(destPath).writeAsBytes(file.data!);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('저장 완료: $savedPath')),
+        SnackBar(content: Text('저장 완료: $destPath')),
       );
     } catch (e) {
       if (!mounted) return;

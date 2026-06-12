@@ -1,8 +1,7 @@
 // lib/features/transfer/transfer_storage_service.dart
 //
-// 파일/이미지를 공개 폴더에 자동 저장하는 서비스.
-// Android: Documents/Mesh-comm/sent|received/ (쓰기 불가 시 Downloads로 폴백)
-// Windows: Documents\Mesh-comm\sent|received\
+// 파일/이미지를 공개 폴더에 저장하는 서비스.
+// Android: Documents/Mesh-comm/...  Windows: Documents\Mesh-comm\...
 // 메타데이터: appSupportDir/mesh_meta/<contactHex>/<tid>.json
 
 import 'dart:convert';
@@ -63,24 +62,51 @@ class TransferStorageService {
     return target;
   }
 
-  /// 그룹 파일 디렉토리: Documents/Mesh-comm/Group/{groupName}/sent|received
-  static Future<Directory> groupFileDir({
-    required String groupName,
-    required String sub, // 'sent' or 'received'
-  }) async {
-    final safeName = groupName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-    return meshCommPublicDir(sub: 'Group/$safeName/$sub');
+  // ── 그룹 경로 ──────────────────────────────────────────────────────────────
+
+  /// 그룹 채팅 인라인: Mesh-comm/Group/Chat/{groupName}/
+  static Future<Directory> groupChatDir({required String groupName}) async {
+    return meshCommPublicDir(sub: 'Group/Chat/${_safeDirName(groupName)}');
   }
 
-  /// 그룹 백업 디렉토리: Documents/Mesh-comm/Group/
+  /// 그룹 명시적 다운로드: Mesh-comm/Group/Downloads/sent|received/
+  static Future<Directory> groupDownloadDir({required String sub}) async {
+    return meshCommPublicDir(sub: 'Group/Downloads/$sub');
+  }
+
+  /// 그룹 백업/복원: Mesh-comm/Group/Downloads/
   static Future<Directory> groupBackupDir() async {
-    return meshCommPublicDir(sub: 'Group');
+    return meshCommPublicDir(sub: 'Group/Downloads');
   }
 
-  Future<Directory> _fileDir(TransferDirection direction) async {
-    final sub = direction == TransferDirection.outgoing ? 'sent' : 'received';
-    return meshCommPublicDir(sub: sub);
+  // ── Personal 경로 ──────────────────────────────────────────────────────────
+
+  /// 1:1 채팅 인라인: Mesh-comm/Personal/Chat/{contactName}/
+  static Future<Directory> personalChatDir({required String contactName}) async {
+    return meshCommPublicDir(sub: 'Personal/Chat/${_safeDirName(contactName)}');
   }
+
+  /// 1:1 명시적 다운로드: Mesh-comm/Personal/Downloads/sent|received/
+  static Future<Directory> personalDownloadDir({required String sub}) async {
+    return meshCommPublicDir(sub: 'Personal/Downloads/$sub');
+  }
+
+  /// Personal Import/Export: Mesh-comm/Personal/Downloads/
+  static Future<Directory> personalBackupDir() async {
+    return meshCommPublicDir(sub: 'Personal/Downloads');
+  }
+
+  // ── 루트 Downloads ─────────────────────────────────────────────────────────
+
+  /// Identity Backup/Restore: Mesh-comm/Downloads/
+  static Future<Directory> rootDownloadsDir() async {
+    return meshCommPublicDir(sub: 'Downloads');
+  }
+
+  // ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
+
+  static String _safeDirName(String name) =>
+      name.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_');
 
   Future<Directory> _metaDir(String contactHex) async {
     final base = await getApplicationSupportDirectory();
@@ -110,9 +136,14 @@ class TransferStorageService {
     required String mimeType,
     required TransferDirection direction,
     required int fileSize,
+    String? contactName,
   }) async {
     try {
-      final fileDir = await _fileDir(direction);
+      final fileDir = contactName != null
+          ? await personalChatDir(contactName: contactName)
+          : await meshCommPublicDir(
+              sub: direction == TransferDirection.outgoing ? 'sent' : 'received',
+            );
       final resolvedName = await _resolveFileName(fileDir, fileName);
       final destFile = File(p.join(fileDir.path, resolvedName));
       await destFile.writeAsBytes(data);

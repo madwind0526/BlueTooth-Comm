@@ -273,15 +273,7 @@ class MessagingService {
     // 그룹 전송(groupId != null)은 1:1 채팅 저장소를 오염시키지 않도록 제외.
     _transfer.transferStream.listen((event) {
       if (event is TransferCompleted && event.meta.groupId == null) {
-        TransferStorageService().save(
-          data: event.data,
-          tid: event.meta.tid,
-          contactHex: event.contactNodeIdHex,
-          fileName: event.meta.fileName,
-          mimeType: event.meta.mimeType,
-          direction: event.direction,
-          fileSize: event.meta.fileSize,
-        );
+        unawaited(_saveTransferFile(event));
       }
     });
 
@@ -783,6 +775,33 @@ class MessagingService {
   /// 진행 중인 전송을 취소한다 (UI에서 X 버튼 클릭 시 호출).
   void cancelTransfer(String tid) {
     _transfer.cancelTransfer(tid);
+  }
+
+  /// 전송 완료된 1:1 파일을 Personal/Chat/{contactName}/ 에 저장한다.
+  Future<void> _saveTransferFile(TransferCompleted event) async {
+    try {
+      String contactName;
+      try {
+        final nodeId = _fromHex(event.contactNodeIdHex);
+        final contact = await _contacts.getContact(nodeId);
+        final name = contact?.displayName ?? '';
+        contactName = name.isNotEmpty ? name : event.contactNodeIdHex.substring(0, 8);
+      } catch (_) {
+        contactName = event.contactNodeIdHex.substring(0, 8);
+      }
+      await TransferStorageService().save(
+        data: event.data,
+        tid: event.meta.tid,
+        contactHex: event.contactNodeIdHex,
+        fileName: event.meta.fileName,
+        mimeType: event.meta.mimeType,
+        direction: event.direction,
+        fileSize: event.meta.fileSize,
+        contactName: contactName,
+      );
+    } catch (e) {
+      _log('_saveTransferFile error: $e');
+    }
   }
 
   // ── 수신 패킷 처리 ───────────────────────────────────────────────────────────

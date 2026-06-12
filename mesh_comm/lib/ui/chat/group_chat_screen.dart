@@ -101,9 +101,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         if (!mounted) return;
         setState(() => _activeTransfers.remove(event.tid));
         try {
-          final dir = await TransferStorageService.groupFileDir(
+          final dir = await TransferStorageService.groupChatDir(
             groupName: _group.name,
-            sub: 'received',
           );
           final path = p.join(dir.path, event.meta.fileName);
           await File(path).writeAsBytes(event.data);
@@ -219,10 +218,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile();
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    // 발신자: sent/ 에 저장 후 UI 반영
+    // 발신자: 그룹 채팅 인라인 폴더에 저장 후 UI 반영
     try {
-      final dir = await TransferStorageService.groupFileDir(
-          groupName: _group.name, sub: 'sent');
+      final dir = await TransferStorageService.groupChatDir(groupName: _group.name);
       final path = p.join(dir.path, file.name);
       await File(path).writeAsBytes(data);
       if (!mounted) return;
@@ -262,10 +260,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile(acceptedTypeGroups: [imageTypes]);
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    // 발신자: sent/ 에 저장 후 UI 반영
+    // 발신자: 그룹 채팅 인라인 폴더에 저장 후 UI 반영
     try {
-      final dir = await TransferStorageService.groupFileDir(
-          groupName: _group.name, sub: 'sent');
+      final dir = await TransferStorageService.groupChatDir(groupName: _group.name);
       final path = p.join(dir.path, file.name);
       await File(path).writeAsBytes(data);
       if (!mounted) return;
@@ -792,25 +789,22 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  /// 앱 시작 시 sent/received 디렉토리에 기존 파일이 있으면 불러온다.
+  /// 앱 시작 시 그룹 채팅 인라인 디렉토리에 기존 파일이 있으면 불러온다.
   Future<void> _loadExistingFiles() async {
     const imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.webp'};
-    for (final sub in ['sent', 'received']) {
-      try {
-        final dir = await TransferStorageService.groupFileDir(
-            groupName: _group.name, sub: sub);
-        if (!await dir.exists()) continue;
-        await for (final entity in dir.list()) {
-          if (entity is! File) continue;
-          final name = p.basename(entity.path);
-          if (_filePaths.containsKey(name)) continue;
-          final ext = p.extension(name).toLowerCase();
-          _filePaths[name] = entity.path;
-          _fileKinds[name] =
-              imageExts.contains(ext) ? TransferKind.image : TransferKind.file;
-        }
-      } catch (_) {}
-    }
+    try {
+      final dir = await TransferStorageService.groupChatDir(groupName: _group.name);
+      if (!await dir.exists()) return;
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (_filePaths.containsKey(name)) continue;
+        final ext = p.extension(name).toLowerCase();
+        _filePaths[name] = entity.path;
+        _fileKinds[name] =
+            imageExts.contains(ext) ? TransferKind.image : TransferKind.file;
+      }
+    } catch (_) {}
     if (mounted) setState(() {});
   }
 
@@ -825,7 +819,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     Widget fileContent;
     if (kind == TransferKind.image) {
       fileContent = GestureDetector(
-        onTap: () => _showImageFullScreen(filePath, fileName),
+        onTap: () => _showImageFullScreen(filePath, fileName, isOut: isOut),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: Image.file(
@@ -843,7 +837,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       );
     } else {
       fileContent = GestureDetector(
-        onTap: () => _showSaveDialog(filePath, fileName),
+        onTap: () => _showSaveDialog(filePath, fileName, isOut: isOut),
         child: Container(
           constraints: const BoxConstraints(maxWidth: 240),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -910,7 +904,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  void _showImageFullScreen(String filePath, String fileName) {
+  void _showImageFullScreen(String filePath, String fileName, {bool isOut = false}) {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -932,7 +926,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     tooltip: '저장',
                     onPressed: () async {
                       Navigator.pop(ctx);
-                      await _showSaveDialog(filePath, fileName);
+                      await _showSaveDialog(filePath, fileName, isOut: isOut);
                     },
                   ),
                   IconButton(
@@ -970,42 +964,45 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
-  Future<void> _showSaveDialog(String srcPath, String fileName) async {
+  Future<void> _showSaveDialog(String srcPath, String fileName, {bool isOut = false}) async {
+    final sub = isOut ? 'sent' : 'received';
+    final destDir = await TransferStorageService.groupDownloadDir(sub: sub);
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('파일 저장'),
-        content: Text('$fileName을(를) 저장하시겠습니까?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(destDir.path, style: const TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('취소')),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('저장')),
+              child: const Text('확인')),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
     try {
-      final initialDir = p.dirname(srcPath);
-      String savedPath;
-      try {
-        final location = await getSaveLocation(
-          suggestedName: fileName,
-          initialDirectory: initialDir,
-        );
-        if (location == null || !mounted) return;
-        await File(srcPath).copy(location.path);
-        savedPath = location.path;
-      } catch (_) {
-        // Android: getSaveLocation 미지원 → Downloads 폴더에 바로 저장
-        final dest = await TransferStorageService.meshCommPublicDir(sub: 'Downloads');
-        final destPath = p.join(dest.path, fileName);
-        await File(srcPath).copy(destPath);
-        savedPath = destPath;
-      }
-      _showMessage('저장 완료: $savedPath');
+      final destPath = p.join(destDir.path, fileName);
+      await File(srcPath).copy(destPath);
+      _showMessage('저장 완료: $destPath');
     } catch (e) {
       _showMessage('저장 실패: $e');
     }
