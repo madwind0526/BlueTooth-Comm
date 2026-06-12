@@ -59,6 +59,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   StreamSubscription<GroupMessage>? _msgSubscription;
   StreamSubscription<ChatGroup>? _updateSubscription;
   StreamSubscription<dynamic>? _transferSubscription;
+  StreamSubscription<String>? _kickedSubscription;
   final Map<String, ({TransferMeta meta, double progress, TransferDirection direction})>
       _activeTransfers = {};
   // 완료된 파일: fileName → 절대 경로 (sent/ 또는 received/ 에 저장된 파일)
@@ -86,6 +87,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         .listen((updated) {
       if (mounted) setState(() => _group = updated);
     });
+    _kickedSubscription = _groupMessaging.kickedFromGroupStream
+        .where((gid) => gid == _group.groupId)
+        .listen((_) => _onKicked());
     // 화면 복원: 진행 중인 그룹 멤버 관련 전송만 복원
     final memberHexes = _group.members.map((m) => m.nodeIdHex).toSet();
     for (final s in TransferService().activeTransferSnapshots) {
@@ -142,11 +146,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
   }
 
+  Future<void> _onKicked() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('그룹 추방'),
+        content: const Text('이 그룹에서 추방되었습니다.'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   void dispose() {
     _msgSubscription?.cancel();
     _updateSubscription?.cancel();
     _transferSubscription?.cancel();
+    _kickedSubscription?.cancel();
     _historyRefreshTimer?.cancel();
     _controller.dispose();
     _keyboardFocusNode.dispose();

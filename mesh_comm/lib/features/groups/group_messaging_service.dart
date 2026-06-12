@@ -30,6 +30,8 @@ class GroupMessagingService {
       StreamController<GroupMessage>.broadcast();
   final _updateController =
       StreamController<ChatGroup>.broadcast();
+  final _kickedController =
+      StreamController<String>.broadcast();
 
   /// 수신된 그룹 초대
   Stream<GroupInvite> get inviteStream => _inviteController.stream;
@@ -39,6 +41,9 @@ class GroupMessagingService {
 
   /// 그룹 멤버/상태 변경 (가입/탈퇴/방장 변경)
   Stream<ChatGroup> get updateStream => _updateController.stream;
+
+  /// 자신이 추방(kick)된 그룹 ID
+  Stream<String> get kickedFromGroupStream => _kickedController.stream;
 
   // ── Packet sending (delegated to MessagingService) ────────────────────────
 
@@ -311,9 +316,10 @@ class GroupMessagingService {
         await _groupService.addMember(groupId, targetId);
       case 'remove':
         await _groupService.removeMember(groupId, targetId);
-        // 자신이 추방(kick)된 경우 → 그룹 전체 삭제
+        // 자신이 추방(kick)된 경우 → 그룹 전체 삭제 후 UI에 알림
         if (targetHex == _hex(IdentityService().myNodeId)) {
           await _groupService.deleteGroup(groupId);
+          _kickedController.add(groupId);
           return;
         }
       case 'leader':
@@ -357,5 +363,6 @@ class GroupMessagingService {
     _inviteController.close();
     _messageController.close();
     _updateController.close();
+    _kickedController.close();
   }
 }

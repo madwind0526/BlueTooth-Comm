@@ -2372,6 +2372,8 @@ class _HomeScreenState extends State<HomeScreen> {
           onSelected: (filter) => setState(() => _filter = filter),
           onImport: _importContacts,
           onExport: _exportContacts,
+          hasUnread1to1: _unreadCounts.values.any((c) => c > 0),
+          hasUnreadGroup: _chatGroups.any((g) => g.unreadCount > 0),
         ),
         const VerticalDivider(width: 1),
         Expanded(child: _buildFilteredList()),
@@ -2793,12 +2795,16 @@ class _FilterRail extends StatelessWidget {
   final ValueChanged<HomeFilter> onSelected;
   final VoidCallback onImport;
   final VoidCallback onExport;
+  final bool hasUnread1to1;
+  final bool hasUnreadGroup;
 
   const _FilterRail({
     required this.selected,
     required this.onSelected,
     required this.onImport,
     required this.onExport,
+    this.hasUnread1to1 = false,
+    this.hasUnreadGroup = false,
   });
 
   @override
@@ -2818,12 +2824,14 @@ class _FilterRail extends StatelessWidget {
             icon: Icons.people_outline,
             label: 'All',
             selected: selected == HomeFilter.all,
+            hasUnread: hasUnread1to1,
             onPressed: () => onSelected(HomeFilter.all),
           ),
           _FilterButton(
             icon: Icons.folder_copy_outlined,
             label: 'Group',
             selected: selected == HomeFilter.groups,
+            hasUnread: hasUnreadGroup,
             onPressed: () => onSelected(HomeFilter.groups),
           ),
           _FilterButton(
@@ -2973,6 +2981,7 @@ class _FilterButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool selected;
+  final bool hasUnread;
   final VoidCallback onPressed;
 
   const _FilterButton({
@@ -2980,6 +2989,7 @@ class _FilterButton extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onPressed,
+    this.hasUnread = false,
   });
 
   @override
@@ -2998,7 +3008,18 @@ class _FilterButton extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: color, size: 20),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(icon, color: color, size: 20),
+                  if (hasUnread)
+                    const Positioned(
+                      right: -4,
+                      top: -3,
+                      child: _PulsingDot(),
+                    ),
+                ],
+              ),
               const SizedBox(height: 3),
               FittedBox(
                 fit: BoxFit.scaleDown,
@@ -3006,6 +3027,52 @@ class _FilterButton extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.25, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _anim,
+      child: Container(
+        width: 7,
+        height: 7,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.orangeAccent,
         ),
       ),
     );
