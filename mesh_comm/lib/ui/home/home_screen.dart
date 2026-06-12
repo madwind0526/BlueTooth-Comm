@@ -308,45 +308,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _handleIncomingGroupInvite(GroupInvite invite) {
     if (!mounted) return;
-    final groupName = invite.groupName;
-    showDialog<void>(
+    unawaited(_handleIncomingGroupInviteAsync(invite));
+  }
+
+  Future<void> _handleIncomingGroupInviteAsync(GroupInvite invite) async {
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
       context: context,
-      barrierDismissible: false, // 창 밖 클릭으로 초대 사라지지 않도록
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('그룹 초대'),
-        content: Text('[$groupName] 그룹에 초대되었습니다.\n수락하시겠습니까?'),
+        content: Text('[${invite.groupName}] 그룹에 초대되었습니다.\n수락하시겠습니까?'),
         actions: [
           TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _groupMessaging.sendInviteResponse(
-                groupId: invite.groupId,
-                toNodeId: invite.fromNodeId,
-                accepted: false,
-              );
-            },
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('거절'),
           ),
           FilledButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _groupService.acceptInvite(invite);
-              await _groupService.addMember(
-                invite.groupId,
-                IdentityService().myNodeId,
-              );
-              await _groupMessaging.sendInviteResponse(
-                groupId: invite.groupId,
-                toNodeId: invite.fromNodeId,
-                accepted: true,
-              );
-              _loadChatGroups();
-            },
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('수락'),
           ),
         ],
       ),
     );
+    if (!mounted) return;
+
+    // 다이얼로그가 완전히 닫힌 후 async 작업 수행
+    if (accepted == true) {
+      await _groupService.acceptInvite(invite);
+      await _groupService.addMember(
+        invite.groupId,
+        IdentityService().myNodeId,
+      );
+      await _groupMessaging.sendInviteResponse(
+        groupId: invite.groupId,
+        toNodeId: invite.fromNodeId,
+        accepted: true,
+      );
+      _loadChatGroups();
+    } else {
+      await _groupMessaging.sendInviteResponse(
+        groupId: invite.groupId,
+        toNodeId: invite.fromNodeId,
+        accepted: false,
+      );
+    }
   }
 
   Future<void> _showCreateGroupDialog() async {
@@ -359,6 +365,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final nameController = TextEditingController();
     final selected = <String>{}; // nodeIdHex set
+    ({String name, List<Contact> invitees})? result;
 
     await showDialog<void>(
       context: context,
@@ -436,16 +443,15 @@ class _HomeScreenState extends State<HomeScreen> {
             FilledButton(
               onPressed: nameController.text.trim().isEmpty
                   ? null
-                  : () async {
+                  : () {
                       final name = nameController.text.trim();
                       if (_chatGroups.any((g) => g.name == name)) {
                         setDlg(() => errorMsg = '그룹명이 있습니다');
                         return;
                       }
-                      Navigator.pop(ctx);
-                      await _doCreateGroup(
-                        name,
-                        contacts
+                      result = (
+                        name: name,
+                        invitees: contacts
                             .where((c) {
                               final hex = c.nodeId
                                   .map((b) =>
@@ -455,6 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             })
                             .toList(),
                       );
+                      Navigator.pop(ctx);
                     },
               child: const Text('만들기'),
             ),
@@ -464,6 +471,12 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
     nameController.dispose();
+
+    // 다이얼로그가 완전히 닫힌 후 그룹 생성 작업 수행
+    // (다이얼로그 exit 애니메이션 중 setState 호출을 방지)
+    if (result != null && mounted) {
+      await _doCreateGroup(result!.name, result!.invitees);
+    }
   }
 
   Future<void> _doCreateGroup(String name, List<Contact> invitees) async {
