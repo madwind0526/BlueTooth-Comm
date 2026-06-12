@@ -570,11 +570,27 @@ class _HomeScreenState extends State<HomeScreen> {
           '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       final filename = 'group_backup_$stamp.json';
       if (!mounted) return;
-      final confirmed = await _confirmSavePath(backupDir.path, filename);
-      if (!confirmed || !mounted) return;
-      final file = File(p.join(backupDir.path, filename));
-      await file.writeAsString(json);
-      _showMessage('백업 완료: ${file.path}');
+      String savedPath;
+      try {
+        // Windows: 파일 탐색기에서 저장 위치 선택
+        final location = await getSaveLocation(
+          suggestedName: filename,
+          initialDirectory: backupDir.path,
+          acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        );
+        if (location == null || !mounted) return;
+        await File(location.path).writeAsString(json);
+        savedPath = location.path;
+      } catch (_) {
+        // Android: 경로 확인 후 직접 저장
+        if (!mounted) return;
+        final confirmed = await _confirmSavePath(backupDir.path, filename);
+        if (!confirmed || !mounted) return;
+        final file = File(p.join(backupDir.path, filename));
+        await file.writeAsString(json);
+        savedPath = file.path;
+      }
+      _showMessage('백업 완료: $savedPath');
     } catch (e) {
       _showMessage('백업 실패: $e');
     }
@@ -1995,11 +2011,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<String?> _saveJsonFile(String json, String filename) async {
     final saveDir = await TransferStorageService.personalBackupDir();
     if (!mounted) return null;
-    final confirmed = await _confirmSavePath(saveDir.path, filename);
-    if (!confirmed || !mounted) return null;
-    final file = File(p.join(saveDir.path, filename));
-    await file.writeAsString(json);
-    return file.path;
+    try {
+      // Windows: 파일 탐색기에서 저장 위치 선택
+      final location = await getSaveLocation(
+        suggestedName: filename,
+        initialDirectory: saveDir.path,
+        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+      );
+      if (location == null || !mounted) return null;
+      await File(location.path).writeAsString(json);
+      return location.path;
+    } catch (_) {
+      // Android: 경로 확인 후 직접 저장
+      if (!mounted) return null;
+      final confirmed = await _confirmSavePath(saveDir.path, filename);
+      if (!confirmed || !mounted) return null;
+      final file = File(p.join(saveDir.path, filename));
+      await file.writeAsString(json);
+      return file.path;
+    }
   }
 
   Future<void> _showImportDialog() async {
@@ -2072,13 +2102,29 @@ class _HomeScreenState extends State<HomeScreen> {
           'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.enc.json';
       final saveDir = await TransferStorageService.rootDownloadsDir();
       if (!mounted) return;
-      final confirmed = await _confirmSavePath(saveDir.path, filename);
-      if (!confirmed || !mounted) return;
-      final file = File(p.join(saveDir.path, filename));
-      await file.writeAsString(json);
+      String savedPath;
+      try {
+        // Windows: 파일 탐색기에서 저장 위치 선택
+        final location = await getSaveLocation(
+          suggestedName: filename,
+          initialDirectory: saveDir.path,
+          acceptedTypeGroups: const [XTypeGroup(label: 'Encrypted identity', extensions: ['json'])],
+        );
+        if (location == null || !mounted) return;
+        await File(location.path).writeAsString(json);
+        savedPath = location.path;
+      } catch (_) {
+        // Android: 경로 확인 후 직접 저장
+        if (!mounted) return;
+        final confirmed = await _confirmSavePath(saveDir.path, filename);
+        if (!confirmed || !mounted) return;
+        final file = File(p.join(saveDir.path, filename));
+        await file.writeAsString(json);
+        savedPath = file.path;
+      }
       final autoFile = await _identityAutoBackupFile();
       await autoFile.writeAsString(json);
-      _showMessage('Encrypted identity backup 저장 완료: ${file.path}');
+      _showMessage('Encrypted identity backup 저장 완료: $savedPath');
     } catch (e) {
       _showMessage('Identity backup 실패: $e');
     }

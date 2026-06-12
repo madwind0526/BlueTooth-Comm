@@ -919,29 +919,36 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             Positioned(
               top: 8,
               right: 8,
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.download_rounded, color: Colors.white),
-                    tooltip: '저장',
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await _showSaveDialog(filePath, fileName, isOut: isOut);
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
-                    tooltip: '삭제',
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await _deleteGroupFile(filePath, fileName);
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.download_rounded, color: Colors.white),
+                      tooltip: '저장',
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _showSaveDialog(filePath, fileName, isOut: isOut);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
+                      tooltip: '삭제',
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _deleteGroupFile(filePath, fileName);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -968,43 +975,56 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final sub = isOut ? 'sent' : 'received';
     final destDir = await TransferStorageService.groupDownloadDir(sub: sub);
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('파일 저장'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(6),
+    try {
+      // Windows: 파일 탐색기에서 저장 위치 선택
+      final location = await getSaveLocation(
+        suggestedName: fileName,
+        initialDirectory: destDir.path,
+      );
+      if (location == null || !mounted) return;
+      await File(srcPath).copy(location.path);
+      _showMessage('저장 완료: ${location.path}');
+    } catch (_) {
+      // Android: getSaveLocation 미지원 → 경로 확인 후 직접 저장
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('파일 저장'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(destDir.path, style: const TextStyle(fontSize: 12)),
               ),
-              child: Text(destDir.path, style: const TextStyle(fontSize: 12)),
-            ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('취소')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('확인')),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('확인')),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      final destPath = p.join(destDir.path, fileName);
-      await File(srcPath).copy(destPath);
-      _showMessage('저장 완료: $destPath');
-    } catch (e) {
-      _showMessage('저장 실패: $e');
+      );
+      if (confirmed != true || !mounted) return;
+      try {
+        final destPath = p.join(destDir.path, fileName);
+        await File(srcPath).copy(destPath);
+        _showMessage('저장 완료: $destPath');
+      } catch (e) {
+        _showMessage('저장 실패: $e');
+      }
     }
   }
 
