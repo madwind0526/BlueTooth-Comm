@@ -25,7 +25,7 @@ class TransferStorageService {
   static Future<Directory> meshCommPublicDir({String sub = ''}) async {
     // sub은 '/' 구분자 사용 (e.g. 'Personal/Downloads/sent')
     // p.joinAll로 분해하면 Windows에서 자동으로 '\' 로 합쳐짐
-    List<String> _subParts() =>
+    List<String> subParts() =>
         sub.isEmpty ? [] : sub.split('/').where((s) => s.isNotEmpty).toList();
 
     if (Platform.isAndroid) {
@@ -37,7 +37,7 @@ class TransferStorageService {
         for (final folder in ['Documents', 'Downloads']) {
           try {
             final target = Directory(
-              p.joinAll([storageRoot, folder, 'Mesh-comm', ..._subParts()]),
+              p.joinAll([storageRoot, folder, 'Mesh-comm', ...subParts()]),
             );
             await target.create(recursive: true);
             final probe = File(p.join(target.path, '.probe'));
@@ -53,7 +53,7 @@ class TransferStorageService {
       // Windows: C:\Users\<user>\Documents\Mesh-comm\
       final docs = await getApplicationDocumentsDirectory();
       final target = Directory(
-        p.joinAll([docs.path, 'Mesh-comm', ..._subParts()]),
+        p.joinAll([docs.path, 'Mesh-comm', ...subParts()]),
       );
       if (!await target.exists()) await target.create(recursive: true);
       return target;
@@ -61,7 +61,7 @@ class TransferStorageService {
     // 최후 폴백: 앱 내부 documents
     final appDocs = await getApplicationDocumentsDirectory();
     final target = Directory(
-      p.joinAll([appDocs.path, 'Mesh-comm', ..._subParts()]),
+      p.joinAll([appDocs.path, 'Mesh-comm', ...subParts()]),
     );
     if (!await target.exists()) await target.create(recursive: true);
     return target;

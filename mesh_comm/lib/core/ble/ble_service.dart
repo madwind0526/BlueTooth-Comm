@@ -96,6 +96,9 @@ class BleService {
   // ── 스캔 구독 ────────────────────────────────────────────────
   StreamSubscription? _scanSubscription;
   Timer? _scanTimer;
+  Timer? _rescanTimer;
+  bool _scanRequested = false;
+  bool _scanStarting = false;
 
   // ── Heartbeat ────────────────────────────────────────────────
   Timer? _heartbeatTimer;
@@ -187,12 +190,19 @@ class BleService {
   ///
   /// [scanDuration] 후 자동 중단된다.
   Future<void> startScan() async {
+    _scanRequested = true;
+    if (_scanStarting) return;
+    _rescanTimer?.cancel();
+    _rescanTimer = null;
+    _scanStarting = true;
     try {
       // 이전 스캔 정리
-      await stopScan();
+      await stopScan(keepAutoRestart: true);
+      if (!_scanRequested) return;
 
       // BLE 어댑터 상태 확인
       final adapterState = await FlutterBluePlus.adapterState.first;
+      if (!_scanRequested) return;
       if (adapterState != BluetoothAdapterState.on) {
         _log('BLE 어댑터 꺼져 있음: $adapterState — 스캔 중단');
         return;
@@ -214,6 +224,7 @@ class BleService {
       }
 
       // onScanResults 사용 (Windows winrt에서 더 안정적)
+      if (!_scanRequested) return;
       _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
         for (final result in results) {
           _handleScanResult(result);
@@ -228,6 +239,10 @@ class BleService {
         withServices: Platform.isWindows ? [] : [Guid(BleConstants.serviceUuid)],
         androidScanMode: AndroidScanMode.lowPower,
       );
+      if (!_scanRequested) {
+        await FlutterBluePlus.stopScan();
+        return;
+      }
 
       // 타임아웃 후 자동 재스캔 (연결 유지를 위해 주기적으로 반복)
       _scanTimer = Timer(BleConstants.scanDuration, () {
@@ -235,9 +250,19 @@ class BleService {
         _scanSubscription = null;
         _log('Scan completed — 15초 후 재스캔');
         // 15초 후 재스캔 (연결된 기기가 maxConnections 미만이면)
-        Timer(const Duration(seconds: 15), () {
-          if (connectedDeviceIds.length < BleConstants.maxConnections) {
-            startScan();
+        if (!_scanRequested) return;
+        final shouldRescan = Platform.isWindows
+            ? connectedDeviceIds.isEmpty
+            : connectedDeviceIds.length < BleConstants.maxConnections;
+        if (!shouldRescan) return;
+        _rescanTimer?.cancel();
+        _rescanTimer = Timer(const Duration(seconds: 15), () {
+          if (!_scanRequested) return;
+          final stillNeedsScan = Platform.isWindows
+              ? connectedDeviceIds.isEmpty
+              : connectedDeviceIds.length < BleConstants.maxConnections;
+          if (stillNeedsScan) {
+            unawaited(startScan());
           }
         });
       });
@@ -245,11 +270,18 @@ class BleService {
       _log('Scan started');
     } catch (e) {
       _log('startScan error: $e');
+    } finally {
+      _scanStarting = false;
     }
   }
 
   /// 진행 중인 스캔을 중지한다.
-  Future<void> stopScan() async {
+  Future<void> stopScan({bool keepAutoRestart = false}) async {
+    if (!keepAutoRestart) {
+      _scanRequested = false;
+      _rescanTimer?.cancel();
+      _rescanTimer = null;
+    }
     _scanTimer?.cancel();
     _scanTimer = null;
     await _scanSubscription?.cancel();
@@ -809,6 +841,8 @@ class BleService {
   Future<void> dispose() async {
     stopHeartbeat();
     await stopScan();
+    _rescanTimer?.cancel();
+    _rescanTimer = null;
 
     if (Platform.isAndroid) {
       await stopAdvertising();

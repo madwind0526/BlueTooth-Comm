@@ -561,7 +561,9 @@ class LanService {
   void _notifyChange() {
     final current = _peers.keys.toSet();
     if (current.length == _lastEmittedPeerIds.length &&
-        current.containsAll(_lastEmittedPeerIds)) return;
+        current.containsAll(_lastEmittedPeerIds)) {
+      return;
+    }
     _lastEmittedPeerIds = current;
     if (!_peersController.isClosed) {
       _peersController.add(List.unmodifiable(_peers.keys));

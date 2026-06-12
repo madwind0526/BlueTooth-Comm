@@ -145,6 +145,8 @@ class MessagingService {
   Timer? _keyAnnounceTimer;
   Timer? _connectionAnnounceTimer;
   Timer? _lanKeepaliveTimer;
+  DateTime? _lastKeyAnnounceAt;
+  Future<void>? _keyAnnounceInFlight;
   final Set<String> _keyAnnounceRespondedNodeIds = {};
   final Map<String, int> _topologyRequestsHandledAt = {};
   StreamSubscription<List<String>>? _connectionSubscription;
@@ -281,11 +283,11 @@ class MessagingService {
     GroupMessagingService().setSendFunction(sendGroupControlPacket);
 
     // KEY_ANNOUNCE 즉시 브로드캐스트 (R-10)
-    await broadcastKeyAnnounce();
+    await broadcastKeyAnnounce(force: true);
 
     // KEY_ANNOUNCE 5분 주기 재전송 (R-10)
     _keyAnnounceTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
-      await broadcastKeyAnnounce();
+      await broadcastKeyAnnounce(force: true);
     });
 
     await _db.deleteExpiredMessages();
@@ -717,7 +719,34 @@ class MessagingService {
     return recipientCount;
   }
 
-  Future<void> broadcastKeyAnnounce() async {
+  Future<void> broadcastKeyAnnounce({bool force = false}) async {
+    final inFlight = _keyAnnounceInFlight;
+    if (inFlight != null) {
+      await inFlight;
+      if (!force) return;
+    }
+
+    final now = DateTime.now();
+    final last = _lastKeyAnnounceAt;
+    if (!force &&
+        last != null &&
+        now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
+
+    final task = _broadcastKeyAnnounceNow();
+    _keyAnnounceInFlight = task;
+    try {
+      await task;
+      _lastKeyAnnounceAt = DateTime.now();
+    } finally {
+      if (identical(_keyAnnounceInFlight, task)) {
+        _keyAnnounceInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _broadcastKeyAnnounceNow() async {
     try {
       final packet = await _identity.createKeyAnnouncePacket();
       unawaited(_lan.broadcastPacket(packet));
@@ -1460,7 +1489,6 @@ class MessagingService {
         senderEncKey,
       );
       final payload = packet.payload;
-      if (payload == null) return null;
       final plain = await _crypto.decrypt(payload, sharedSecret);
       if (plain == null) return null;
       return utf8.decode(plain);
@@ -1486,6 +1514,8 @@ class MessagingService {
     _connectionAnnounceTimer = null;
     _lanKeepaliveTimer?.cancel();
     _lanKeepaliveTimer = null;
+    _lastKeyAnnounceAt = null;
+    _keyAnnounceInFlight = null;
     await _connectionSubscription?.cancel();
     _connectionSubscription = null;
     await _lanConnectionSubscription?.cancel();

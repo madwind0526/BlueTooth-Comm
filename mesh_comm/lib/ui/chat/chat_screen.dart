@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:mesh_comm/core/platform/platform_file_picker.dart';
-import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mesh_comm/core/storage/database_service.dart';
@@ -365,7 +364,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() {
         if (sent) {
-          final sentMode = _messageMode;
           _controller.clear();
           _messages.add(
             _ChatMessage(
@@ -1173,7 +1171,7 @@ class _BlinkingDotsState extends State<_BlinkingDots>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (_, __) {
+      builder: (_, _) {
         final t = _ctrl.value;
         return Row(
           mainAxisSize: MainAxisSize.min,
