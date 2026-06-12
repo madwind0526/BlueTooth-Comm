@@ -183,6 +183,7 @@ class GroupService {
     required String payload,
     required int timestamp,
     bool isOutgoing = false,
+    int? expiresAt,
   }) async {
     await _db.saveGroupMessage(
       msgId: msgId,
@@ -192,6 +193,7 @@ class GroupService {
       payload: payload,
       timestamp: timestamp,
       isOutgoing: isOutgoing,
+      expiresAt: expiresAt,
     );
     if (!isOutgoing) {
       await _db.incrementGroupMemberMsgCount(groupId, senderId);

@@ -19,7 +19,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   static const String _dbFileName = 'mesh_comm.db';
-  static const int _dbVersion = 10;
+  static const int _dbVersion = 11;
 
   Database? _db;
 
@@ -231,6 +231,11 @@ class DatabaseService {
           is_long     INTEGER NOT NULL DEFAULT 0
         )
       ''');
+    }
+    if (oldVersion < 11) {
+      await db.execute(
+        'ALTER TABLE group_messages ADD COLUMN expires_at INTEGER',
+      );
     }
     if (oldVersion < 10) {
       // 기존 로컬 그룹 태그 초기화 (새 ChatGroup 시스템으로 교체)
@@ -912,6 +917,7 @@ class DatabaseService {
     required String payload,
     required int timestamp,
     bool isOutgoing = false,
+    int? expiresAt,
   }) async {
     await _database.insert('group_messages', {
       'msg_id': msgId,
@@ -922,6 +928,7 @@ class DatabaseService {
       'timestamp': timestamp,
       'is_read': 0,
       'is_outgoing': isOutgoing ? 1 : 0,
+      'expires_at': expiresAt,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
@@ -929,16 +936,28 @@ class DatabaseService {
     String groupId, {
     int limit = 100,
   }) async {
+    await deleteExpiredGroupMessages();
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final rows = await _database.rawQuery(
       '''
       SELECT * FROM group_messages
       WHERE group_id = ?
+        AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY timestamp ASC
       LIMIT ?
       ''',
-      [groupId, limit],
+      [groupId, nowMs, limit],
     );
     return rows.map(Map.of).toList();
+  }
+
+  Future<int> deleteExpiredGroupMessages({int? nowMs}) {
+    final effectiveNowMs = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return _database.delete(
+      'group_messages',
+      where: 'expires_at IS NOT NULL AND expires_at <= ?',
+      whereArgs: [effectiveNowMs],
+    );
   }
 
   Future<int> getGroupUnreadCount(String groupId) async {

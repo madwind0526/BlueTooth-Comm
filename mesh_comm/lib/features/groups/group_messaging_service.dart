@@ -9,6 +9,7 @@ import 'package:mesh_comm/core/packet/msg_type.dart';
 import 'package:mesh_comm/features/groups/chat_group_model.dart';
 import 'package:mesh_comm/features/groups/group_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
+import 'package:mesh_comm/features/messaging/message_policy.dart';
 
 /// 그룹 채팅 패킷 프로토콜 서비스 (싱글톤).
 /// MessagingService가 수신한 그룹 패킷을 여기로 위임한다.
@@ -103,23 +104,28 @@ class GroupMessagingService {
     required ChatGroup group,
     required String text,
     String? filePrefix, // '__FILE__' or '__IMAGE__'
+    bool isTimed = false,
   }) async {
     final myNodeId = IdentityService().myNodeId;
     final myHex = _hex(myNodeId);
     final payload = filePrefix != null ? '$filePrefix$text' : text;
+    final msgPayload = <String, dynamic>{
+      'gid': group.groupId,
+      'sid': myHex,
+      'text': payload,
+    };
+    if (isTimed) {
+      msgPayload['readTtlMs'] = MessagePolicy.timedMessageReadTtl.inMilliseconds;
+    }
     var sent = 0;
     for (final member in group.members) {
       if (member.nodeIdHex == myHex) continue;
-      // 직접 연결 체크 제거: broadcast + relay로 비연결 멤버에도 전달
-      final ok = await _send(member.nodeId, MsgType.groupMessage, {
-        'gid': group.groupId,
-        'sid': myHex,
-        'text': payload,
-      });
+      final ok = await _send(member.nodeId, MsgType.groupMessage, msgPayload);
       if (ok) sent++;
     }
 
     // 로컬 저장 (발신 메시지는 전달 성공 여부와 관계없이 항상 저장)
+    final now = DateTime.now().millisecondsSinceEpoch;
     final msgId = MeshPacket.generateMsgId();
     await _groupService.saveMessage(
       msgId: msgId,
@@ -127,8 +133,11 @@ class GroupMessagingService {
       senderId: myNodeId,
       msgType: MsgType.groupMessage.value,
       payload: payload,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      timestamp: now,
       isOutgoing: true,
+      expiresAt: isTimed
+          ? now + MessagePolicy.timedMessageReadTtl.inMilliseconds
+          : null,
     );
     return sent;
   }
@@ -258,6 +267,7 @@ class GroupMessagingService {
   ) async {
     final groupId = json['gid'] as String;
     final text = json['text'] as String? ?? '';
+    final readTtlMs = json['readTtlMs'] as int?;
 
     final group = await _groupService.getGroup(groupId);
     if (group == null) return;
@@ -270,6 +280,7 @@ class GroupMessagingService {
       payload: text,
       timestamp: packet.timestamp,
       isOutgoing: false,
+      expiresAt: readTtlMs != null ? packet.timestamp + readTtlMs : null,
     );
 
     final msg = GroupMessage(
@@ -300,6 +311,11 @@ class GroupMessagingService {
         await _groupService.addMember(groupId, targetId);
       case 'remove':
         await _groupService.removeMember(groupId, targetId);
+        // 자신이 추방(kick)된 경우 → 그룹 전체 삭제
+        if (targetHex == _hex(IdentityService().myNodeId)) {
+          await _groupService.deleteGroup(groupId);
+          return;
+        }
       case 'leader':
         await _groupService.setLeader(groupId, targetId);
     }

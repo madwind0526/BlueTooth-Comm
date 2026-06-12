@@ -289,11 +289,13 @@ class MessagingService {
     });
 
     await _db.deleteExpiredMessages();
+    await _db.deleteExpiredGroupMessages();
 
     // seen_messages 30분 주기 정리 (R-09)
     _cleanSeenTimer = Timer.periodic(const Duration(minutes: 30), (_) async {
       try {
         await _db.deleteExpiredMessages();
+        await _db.deleteExpiredGroupMessages();
         await _db.cleanOldSeenMessages();
         _log('seen_messages 정리 완료');
       } catch (e) {

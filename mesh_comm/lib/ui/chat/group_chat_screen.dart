@@ -66,6 +66,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final Map<String, TransferKind> _fileKinds = {};
   MessageSendMode _messageMode = MessageSendMode.normal;
   bool _isSending = false;
+  Timer? _historyRefreshTimer;
 
   @override
   void initState() {
@@ -73,6 +74,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _group = widget.group;
     _loadMessages();
     _loadExistingFiles();
+    _historyRefreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _loadMessages(),
+    );
     _msgSubscription = _groupMessaging.messageStream
         .where((m) => m.groupId == _group.groupId)
         .listen(_onIncomingMessage);
@@ -142,6 +147,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _msgSubscription?.cancel();
     _updateSubscription?.cancel();
     _transferSubscription?.cancel();
+    _historyRefreshTimer?.cancel();
     _controller.dispose();
     _keyboardFocusNode.dispose();
     _scrollController.dispose();
@@ -205,6 +211,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final sent = await _groupMessaging.sendGroupMessage(
       group: _group,
       text: text,
+      isTimed: _messageMode == MessageSendMode.timed,
     );
     if (!mounted) return;
     setState(() {
