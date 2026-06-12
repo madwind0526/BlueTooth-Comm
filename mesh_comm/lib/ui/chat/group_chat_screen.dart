@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:mesh_comm/core/platform/platform_file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -976,55 +977,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final destDir = await TransferStorageService.groupDownloadDir(sub: sub);
     if (!mounted) return;
     try {
-      // Windows: 파일 탐색기에서 저장 위치 선택
-      final location = await getSaveLocation(
+      final bytes = await File(srcPath).readAsBytes();
+      final saved = await PlatformFilePicker.saveFileAsBytes(
+        bytes: bytes,
         suggestedName: fileName,
         initialDirectory: destDir.path,
       );
-      if (location == null || !mounted) return;
-      await File(srcPath).copy(location.path);
-      _showMessage('저장 완료: ${location.path}');
-    } catch (_) {
-      // Android: getSaveLocation 미지원 → 경로 확인 후 직접 저장
+      if (saved == null || !mounted) return;
+      _showMessage('저장 완료');
+    } catch (e) {
       if (!mounted) return;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('파일 저장'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(destDir.path, style: const TextStyle(fontSize: 12)),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소')),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('확인')),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-      try {
-        final destPath = p.join(destDir.path, fileName);
-        await File(srcPath).copy(destPath);
-        _showMessage('저장 완료: $destPath');
-      } catch (e) {
-        _showMessage('저장 실패: $e');
-      }
+      _showMessage('저장 실패: $e');
     }
   }
 

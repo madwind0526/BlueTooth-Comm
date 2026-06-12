@@ -1,23 +1,44 @@
 package com.meshcomm.mesh_comm
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.DocumentsContract
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val alertChannelName = "mesh_comm/alerts"
+    private val fileChannelName  = "com.meshcomm/file_selector"
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var filePickerResult: MethodChannel.Result? = null
+
+    companion object {
+        private const val REQ_OPEN_FILE = 2001
+        private const val REQ_SAVE_FILE = 2002
+
+        /** /storage/emulated/0/... 경로 → ExternalStorage content:// URI */
+        private fun pathToContentUri(path: String): Uri? {
+            val base = "/storage/emulated/0/"
+            if (!path.startsWith(base)) return null
+            val relative = path.removePrefix(base).replace("/", "%2F")
+            return Uri.parse(
+                "content://com.android.externalstorage.documents/document/primary:$relative"
+            )
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,21 +92,105 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // ── 알림/진동 채널 ─────────────────────────────────────────────────────
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             alertChannelName,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "playAlert" -> {
-                    playAlert()
-                    result.success(null)
+                "playAlert" -> { playAlert(); result.success(null) }
+                "vibrate"   -> { vibrate();   result.success(null) }
+                else        -> result.notImplemented()
+            }
+        }
+
+        // ── 파일 선택/저장 채널 ────────────────────────────────────────────────
+        // openFilePicker  : ACTION_GET_CONTENT  → Samsung My Files (폴더 트리)
+        // saveFilePicker  : ACTION_CREATE_DOCUMENT → DocumentsUI 저장
+        // readFileFromUri : content URI → ByteArray
+        // writeFileToUri  : ByteArray → content URI
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            fileChannelName,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openFilePicker" -> {
+                    val dir  = call.argument<String>("initialDirectory")
+                    val mime = call.argument<String>("mimeType") ?: "*/*"
+                    filePickerResult = result
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = mime
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        if (dir != null) {
+                            pathToContentUri(dir)?.let {
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+                            }
+                        }
+                    }
+                    startActivityForResult(intent, REQ_OPEN_FILE)
                 }
-                "vibrate" -> {
-                    vibrate()
-                    result.success(null)
+                "saveFilePicker" -> {
+                    val dir  = call.argument<String>("initialDirectory")
+                    val name = call.argument<String>("suggestedName") ?: "file"
+                    filePickerResult = result
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        putExtra(Intent.EXTRA_TITLE, name)
+                        if (dir != null) {
+                            pathToContentUri(dir)?.let {
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+                            }
+                        }
+                    }
+                    startActivityForResult(intent, REQ_SAVE_FILE)
+                }
+                "readFileFromUri" -> {
+                    val uriStr = call.argument<String>("uri")
+                    if (uriStr == null) {
+                        result.error("INVALID", "uri required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val bytes = contentResolver
+                            .openInputStream(Uri.parse(uriStr))
+                            ?.use { it.readBytes() }
+                        result.success(bytes)
+                    } catch (e: Exception) {
+                        result.error("READ_ERROR", e.message, null)
+                    }
+                }
+                "writeFileToUri" -> {
+                    val uriStr = call.argument<String>("uri")
+                    val bytes  = call.argument<ByteArray>("bytes")
+                    if (uriStr == null || bytes == null) {
+                        result.error("INVALID", "uri and bytes required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        contentResolver
+                            .openOutputStream(Uri.parse(uriStr))
+                            ?.use { it.write(bytes) }
+                        result.success(null)
+                    } catch (e: Exception) {
+                        result.error("WRITE_ERROR", e.message, null)
+                    }
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_OPEN_FILE || requestCode == REQ_SAVE_FILE) {
+            if (resultCode == Activity.RESULT_OK) {
+                filePickerResult?.success(data?.data?.toString())
+            } else {
+                filePickerResult?.success(null)
+            }
+            filePickerResult = null
         }
     }
 
@@ -113,10 +218,7 @@ class MainActivity : FlutterActivity() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator.vibrate(
-                VibrationEffect.createOneShot(
-                    450,
-                    VibrationEffect.DEFAULT_AMPLITUDE,
-                ),
+                VibrationEffect.createOneShot(450, VibrationEffect.DEFAULT_AMPLITUDE),
             )
         } else {
             @Suppress("DEPRECATION")

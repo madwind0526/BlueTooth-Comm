@@ -3,6 +3,7 @@ import 'dart:io' show File, Platform, exit;
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
+import 'package:mesh_comm/core/platform/platform_file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -493,73 +494,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadChatGroups();
   }
 
-  Future<bool> _confirmSavePath(String folderPath, String filename) async {
-    if (!mounted) return false;
-    return await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('저장'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('저장 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                p.join(folderPath, filename),
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인')),
-        ],
-      ),
-    ) ?? false;
-  }
-
-  Future<bool> _confirmLoadPath(String folderPath) async {
-    if (!mounted) return false;
-    return await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('불러오기'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('불러오기 위치:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(folderPath, style: const TextStyle(fontSize: 12)),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '확인을 누르면 파일 선택창이 열립니다.',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('확인')),
-        ],
-      ),
-    ) ?? false;
-  }
 
   Future<void> _backupGroups() async {
     try {
@@ -570,27 +504,14 @@ class _HomeScreenState extends State<HomeScreen> {
           '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       final filename = 'group_backup_$stamp.json';
       if (!mounted) return;
-      String savedPath;
-      try {
-        // Windows: 파일 탐색기에서 저장 위치 선택
-        final location = await getSaveLocation(
-          suggestedName: filename,
-          initialDirectory: backupDir.path,
-          acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
-        );
-        if (location == null || !mounted) return;
-        await File(location.path).writeAsString(json);
-        savedPath = location.path;
-      } catch (_) {
-        // Android: 경로 확인 후 직접 저장
-        if (!mounted) return;
-        final confirmed = await _confirmSavePath(backupDir.path, filename);
-        if (!confirmed || !mounted) return;
-        final file = File(p.join(backupDir.path, filename));
-        await file.writeAsString(json);
-        savedPath = file.path;
-      }
-      _showMessage('백업 완료: $savedPath');
+      final saved = await PlatformFilePicker.saveFileAsString(
+        content: json,
+        suggestedName: filename,
+        initialDirectory: backupDir.path,
+        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+      );
+      if (saved == null || !mounted) return;
+      _showMessage('백업 완료');
     } catch (e) {
       _showMessage('백업 실패: $e');
     }
@@ -600,15 +521,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final backupDir = await TransferStorageService.groupBackupDir();
       if (!mounted) return;
-      final confirmed = await _confirmLoadPath(backupDir.path);
-      if (!confirmed || !mounted) return;
-      const typeGroup = XTypeGroup(label: 'JSON', extensions: ['json']);
-      final file = await openFile(
+      final json = await PlatformFilePicker.openFileAsString(
         initialDirectory: backupDir.path,
-        acceptedTypeGroups: [typeGroup],
+        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        mimeType: 'application/json',
       );
-      if (file == null || !mounted) return;
-      final json = await file.readAsString();
+      if (json == null || !mounted) return;
       final count = await _groupService.importGroupsFromJson(json);
       if (!mounted) return;
       _showMessage('복원 완료: $count개 그룹');
@@ -2011,25 +1929,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<String?> _saveJsonFile(String json, String filename) async {
     final saveDir = await TransferStorageService.personalBackupDir();
     if (!mounted) return null;
-    try {
-      // Windows: 파일 탐색기에서 저장 위치 선택
-      final location = await getSaveLocation(
-        suggestedName: filename,
-        initialDirectory: saveDir.path,
-        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
-      );
-      if (location == null || !mounted) return null;
-      await File(location.path).writeAsString(json);
-      return location.path;
-    } catch (_) {
-      // Android: 경로 확인 후 직접 저장
-      if (!mounted) return null;
-      final confirmed = await _confirmSavePath(saveDir.path, filename);
-      if (!confirmed || !mounted) return null;
-      final file = File(p.join(saveDir.path, filename));
-      await file.writeAsString(json);
-      return file.path;
-    }
+    return PlatformFilePicker.saveFileAsString(
+      content: json,
+      suggestedName: filename,
+      initialDirectory: saveDir.path,
+      acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+    );
   }
 
   Future<void> _showImportDialog() async {
@@ -2043,14 +1948,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final importDir = await TransferStorageService.personalBackupDir();
       if (!mounted) return;
-      final confirmed = await _confirmLoadPath(importDir.path);
-      if (!confirmed || !mounted) return;
-      final file = await openFile(
+      final rawJson = await PlatformFilePicker.openFileAsString(
         initialDirectory: importDir.path,
         acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        mimeType: 'application/json',
       );
-      if (file == null) return;
-      final rawJson = await file.readAsString();
+      if (rawJson == null || !mounted) return;
 
       if (type == 'contacts') {
         final count = await _contactFileService.importContactsFromBackupJson(rawJson);
@@ -2102,29 +2005,18 @@ class _HomeScreenState extends State<HomeScreen> {
           'mesh_comm_identity_${DateTime.now().millisecondsSinceEpoch}.enc.json';
       final saveDir = await TransferStorageService.rootDownloadsDir();
       if (!mounted) return;
-      String savedPath;
-      try {
-        // Windows: 파일 탐색기에서 저장 위치 선택
-        final location = await getSaveLocation(
-          suggestedName: filename,
-          initialDirectory: saveDir.path,
-          acceptedTypeGroups: const [XTypeGroup(label: 'Encrypted identity', extensions: ['json'])],
-        );
-        if (location == null || !mounted) return;
-        await File(location.path).writeAsString(json);
-        savedPath = location.path;
-      } catch (_) {
-        // Android: 경로 확인 후 직접 저장
-        if (!mounted) return;
-        final confirmed = await _confirmSavePath(saveDir.path, filename);
-        if (!confirmed || !mounted) return;
-        final file = File(p.join(saveDir.path, filename));
-        await file.writeAsString(json);
-        savedPath = file.path;
-      }
+      final saved = await PlatformFilePicker.saveFileAsString(
+        content: json,
+        suggestedName: filename,
+        initialDirectory: saveDir.path,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'Encrypted identity', extensions: ['json']),
+        ],
+      );
+      if (saved == null || !mounted) return;
       final autoFile = await _identityAutoBackupFile();
       await autoFile.writeAsString(json);
-      _showMessage('Encrypted identity backup 저장 완료: $savedPath');
+      _showMessage('Encrypted identity backup 저장 완료');
     } catch (e) {
       _showMessage('Identity backup 실패: $e');
     }
@@ -2188,18 +2080,13 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         final restoreDir = await TransferStorageService.rootDownloadsDir();
         if (!mounted) return;
-        final pathConfirmed = await _confirmLoadPath(restoreDir.path);
-        if (!pathConfirmed || !mounted) return;
-        final file = await openFile(
+        rawJson = await PlatformFilePicker.openFileAsString(
           initialDirectory: restoreDir.path,
           acceptedTypeGroups: const [
-            XTypeGroup(
-              label: 'Encrypted MeshComm identity',
-              extensions: ['json'],
-            ),
+            XTypeGroup(label: 'Encrypted MeshComm identity', extensions: ['json']),
           ],
+          mimeType: 'application/json',
         );
-        rawJson = await file?.readAsString();
       }
 
       if (rawJson == null) return;
