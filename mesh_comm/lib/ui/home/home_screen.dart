@@ -137,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<GroupInvite>? _groupInviteSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
   StreamSubscription<ChatGroup>? _groupUpdateSubscription;
+  StreamSubscription<String>? _groupKickedSubscription;
 
   List<ChatGroup> _chatGroups = [];
   List<ChatGroup> _demoChatGroups = [];
@@ -272,6 +273,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _groupUpdateSubscription = _groupMessaging.updateStream.listen((_) {
       _loadChatGroups();
     });
+    _groupKickedSubscription = _groupMessaging.kickedFromGroupStream.listen((_) {
+      _loadChatGroups();
+    });
   }
 
   @override
@@ -286,6 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _groupInviteSubscription?.cancel();
     _groupMessageSubscription?.cancel();
     _groupUpdateSubscription?.cancel();
+    _groupKickedSubscription?.cancel();
     _searchController
       ..removeListener(_refresh)
       ..dispose();
