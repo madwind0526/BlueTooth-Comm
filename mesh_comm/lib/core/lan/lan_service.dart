@@ -294,8 +294,15 @@ class LanService {
           final packet = MeshPacket.fromBytes(frame);
           if (packet == null) continue;
 
-          // 처음 수신한 패킷의 senderId로 피어를 확인
+          // Register peer from the first DIRECT (hopCount==0) packet only.
+          // Relay packets (hopCount>0) have senderId = original sender, not the direct TCP peer,
+          // so using them would map the wrong nodeHex to this socket and corrupt dedup logic.
           if (resolvedId == null) {
+            if (packet.hopCount > 0) {
+              // Forward relay packet without registering; wait for a direct packet.
+              _onPacketReceived?.call(packet, '');
+              continue;
+            }
             resolvedId = _hexOf(packet.senderId);
             if (!_running) {
               socket.destroy();
@@ -304,8 +311,8 @@ class LanService {
             if (!_peers.containsKey(resolvedId)) {
               _peers[resolvedId!] = socket;
               _buffers[resolvedId!] = buffer;
-              _reconnectAttempts.remove(resolvedId); // 연결 성공 → backoff 카운터 리셋
-              _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch; // 초기 생존 시각
+              _reconnectAttempts.remove(resolvedId);
+              _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch;
               _notifyChange();
               _log('Peer registered via incoming: $resolvedId');
             } else {
