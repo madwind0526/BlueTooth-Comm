@@ -218,5 +218,13 @@ class TransferFileRecord {
 class TransferFailed extends TransferEvent {
   final String reason;
   final TransferDirection direction;
-  const TransferFailed(super.tid, {required this.reason, required this.direction});
+  final TransferMeta? meta;
+  final String? contactNodeIdHex;
+  const TransferFailed(
+    super.tid, {
+    required this.reason,
+    required this.direction,
+    this.meta,
+    this.contactNodeIdHex,
+  });
 }

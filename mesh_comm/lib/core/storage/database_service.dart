@@ -42,6 +42,22 @@ class DatabaseService {
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
+    await _ensureSchema();
+  }
+
+  /// Safety net: verifies actual columns exist and adds any that are missing.
+  /// Catches devices with partially-applied migrations where the DB version
+  /// number was already bumped but a column ALTER failed silently.
+  Future<void> _ensureSchema() async {
+    final cols = await _database.rawQuery(
+      'PRAGMA table_info(group_messages)',
+    );
+    final colNames = cols.map((c) => c['name'] as String).toSet();
+    if (!colNames.contains('expires_at')) {
+      await _database.execute(
+        'ALTER TABLE group_messages ADD COLUMN expires_at INTEGER',
+      );
+    }
   }
 
   Database get _database {
@@ -148,7 +164,8 @@ class DatabaseService {
         payload     TEXT,
         timestamp   INTEGER NOT NULL,
         is_read     INTEGER NOT NULL DEFAULT 0,
-        is_outgoing INTEGER NOT NULL DEFAULT 0
+        is_outgoing INTEGER NOT NULL DEFAULT 0,
+        expires_at  INTEGER
       )
     ''');
 
@@ -232,13 +249,8 @@ class DatabaseService {
         )
       ''');
     }
-    if (oldVersion < 11) {
-      await db.execute(
-        'ALTER TABLE group_messages ADD COLUMN expires_at INTEGER',
-      );
-    }
     if (oldVersion < 10) {
-      // 기존 로컬 그룹 태그 초기화 (새 ChatGroup 시스템으로 교체)
+      // Reset local group tags (replaced by new ChatGroup system)
       await db.execute("UPDATE contacts SET group_name = NULL");
 
       await db.execute('''
@@ -273,6 +285,11 @@ class DatabaseService {
       ''');
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages (group_id, timestamp)',
+      );
+    }
+    if (oldVersion < 11) {
+      await db.execute(
+        'ALTER TABLE group_messages ADD COLUMN expires_at INTEGER',
       );
     }
   }

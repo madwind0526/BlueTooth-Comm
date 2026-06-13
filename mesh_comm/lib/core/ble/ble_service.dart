@@ -367,16 +367,26 @@ class BleService {
           return false;
         }
         _messageCharacteristics[deviceId] = characteristic;
-        final frames = BleFragmentCodec.fragment(bytes, mtu: device.mtuNow);
+        // Android GATT hard-caps characteristic values at 512 bytes regardless
+        // of negotiated MTU. With mtu=517 the codec produces 514-byte frames
+        // which fail with PlatformException(dataLen: 514 > max: 512).
+        // Cap at 515 so the frame size (mtu-3) never exceeds 512.
+        final effectiveMtu = device.mtuNow.clamp(
+          BleConstants.defaultMtu,
+          515,
+        );
+        final frames = BleFragmentCodec.fragment(bytes, mtu: effectiveMtu);
         for (final frame in frames) {
           await characteristic.write(frame, withoutResponse: true);
         }
         _log(
           'sendPacket: ${bytes.length} bytes / ${frames.length} fragments '
-          '→ $deviceId (central write, mtu=${device.mtuNow})',
+          '→ $deviceId (central write, mtu=${device.mtuNow}→$effectiveMtu)',
         );
       } else {
-        final mtu = _peripheralMtuByDevice[deviceId] ?? BleConstants.defaultMtu;
+        final rawMtu =
+            _peripheralMtuByDevice[deviceId] ?? BleConstants.defaultMtu;
+        final mtu = rawMtu.clamp(BleConstants.defaultMtu, 515);
         final frames = BleFragmentCodec.fragment(bytes, mtu: mtu);
         for (final frame in frames) {
           await peripheral.BlePeripheral.updateCharacteristic(
@@ -388,7 +398,7 @@ class BleService {
         }
         _log(
           'sendPacket: ${bytes.length} bytes / ${frames.length} fragments '
-          '→ $deviceId (peripheral notify, mtu=$mtu)',
+          '→ $deviceId (peripheral notify, mtu=$rawMtu→$mtu)',
         );
       }
       return true;

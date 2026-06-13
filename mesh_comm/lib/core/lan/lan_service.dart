@@ -390,6 +390,19 @@ class LanService {
     }
   }
 
+  /// Immediately retries all cached peers that are not yet connected.
+  /// Called from notifyWakeup when the LAN service is already running.
+  void tryReconnectCached() => _reconnectCachedPeers();
+
+  /// Immediately tries to connect to a specific cached peer by nodeId hex.
+  /// No-op if already connected, already connecting, or peer not in cache.
+  void tryConnectCached(String nodeIdHex) {
+    if (!_running) return;
+    if (_peers.containsKey(nodeIdHex) || _connecting.contains(nodeIdHex)) return;
+    final peer = _peerAddressCache[nodeIdHex];
+    if (peer != null) _connectToPeer(peer);
+  }
+
   /// 주소 캐시에 있는 피어에 즉시 재연결 시도 (start() 후 호출).
   void _reconnectCachedPeers() {
     if (!_running) return;
