@@ -811,6 +811,9 @@ class MessagingService {
       final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
       if (lanSent) {
         _lanRetryAfterMs.remove(targetNodeIdHex);
+        // TCP 좀비 연결 대비: 다른 LAN 피어(e.g. S26)를 통한 relay 경로 확보.
+        // BLE broadcast는 하지 않으므로 GATT 과부하 없음.
+        unawaited(_lan.broadcastPacket(packet));
         return 1;
       }
       _lanRetryAfterMs[targetNodeIdHex] =
