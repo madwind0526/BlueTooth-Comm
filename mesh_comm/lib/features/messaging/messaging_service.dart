@@ -1138,8 +1138,14 @@ class MessagingService {
       return;
     }
 
-    // hopCount == 0: 발신자가 직접 보낸 패킷 → 직접 연결 이웃으로 기록
-    if (packet.hopCount == 0) {
+    // Record BLE device ID → nodeIdHex for BLE routing.
+    // Skip LAN peers: LanService passes nodeIdHex as fromDeviceId (not a BLE
+    // MAC). Storing {nodeIdHex: nodeIdHex} here would corrupt _bleDeviceIdForNode()
+    // which iterates in insertion order and may return nodeIdHex as the BLE
+    // device ID, causing PC → Android sends to silently fail.
+    if (packet.hopCount == 0 &&
+        fromDeviceId.isNotEmpty &&
+        !_lan.hasPeer(fromDeviceId)) {
       _deviceToNodeHex[fromDeviceId] = _hex(packet.senderId);
     }
 

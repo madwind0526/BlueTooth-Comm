@@ -374,17 +374,37 @@ class LanService {
         socket.destroy();
         return;
       }
-      // Simultaneous-open: if the incoming path already registered this peer,
-      // discard our outgoing. The tie-break in the incoming path ensures the
-      // correct socket survives.
       if (_peers.containsKey(knownNodeIdHex)) {
-        _log('[DIAG-LAN] Outgoing duplicate discarded (incoming already registered): $knownNodeIdHex');
-        socket.destroy();
-        return;
+        // Simultaneous-open: the incoming path registered the peer before our
+        // outgoing connection completed. Apply the SAME nodeId tie-break that
+        // the incoming path uses, so both sides reach the same decision.
+        //
+        // Lower nodeId keeps its OWN outgoing — replace the registered incoming.
+        // Higher nodeId yields — discard this outgoing, keep the incoming.
+        //
+        // Without this, both sockets get destroyed: A (lower) discards its
+        // outgoing, B (higher) yields by destroying B's outgoing which is the
+        // socket A registered, so A fires removePeer and both connections die.
+        final myHex = _myNodeId != null ? _hexOf(_myNodeId!) : '';
+        if (myHex.compareTo(knownNodeIdHex) < 0) {
+          // Lower nodeId wins: replace the registered incoming with our outgoing.
+          final old = _peers[knownNodeIdHex]!;
+          _peers[knownNodeIdHex] = socket;
+          _buffers[knownNodeIdHex] = buffer;
+          old.destroy();
+          _log('Simultaneous open (outgoing late): lower nodeId wins → replaced incoming: $knownNodeIdHex');
+          // Fall through to update heartbeat/notify below.
+        } else {
+          // Higher nodeId yields: keep the incoming, discard this outgoing.
+          _log('Simultaneous open (outgoing late): higher nodeId yields → discarding outgoing: $knownNodeIdHex');
+          socket.destroy();
+          return;
+        }
+      } else {
+        _peers[knownNodeIdHex] = socket;
+        _buffers[knownNodeIdHex] = buffer;
       }
-      _peers[knownNodeIdHex] = socket;
-      _buffers[knownNodeIdHex] = buffer;
-      _reconnectAttempts.remove(knownNodeIdHex); // successful connect → reset backoff counter
+      _reconnectAttempts.remove(knownNodeIdHex);
       _lastPongMs[knownNodeIdHex] = DateTime.now().millisecondsSinceEpoch;
       _notifyChange();
     }
