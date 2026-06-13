@@ -145,10 +145,10 @@ void main() {
     expect(canOpenChatWithContact(UserLevel.creator, serverContact), isFalse);
   });
 
-  test('message policy keeps notice messages short and rate limited', () {
+  test('message policy keeps notice messages short without cooldown', () {
     expect(MessagePolicy.normalMaxLength, 160);
     expect(MessagePolicy.noticeMaxLength, 50);
-    expect(MessagePolicy.noticeCooldown, const Duration(days: 1));
+    expect(MessagePolicy.noticeCooldown, Duration.zero);
     expect(MessagePolicy.timedMessageReadTtl, const Duration(minutes: 1));
   });
 

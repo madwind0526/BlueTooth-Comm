@@ -195,6 +195,7 @@ class TransferService {
     required String mimeType,
     required String targetNodeIdHex,
     TransferKind kind = TransferKind.file,
+    TransferTransport transport = TransferTransport.unknown,
     int imageIndex = 0,
     int chunkSize = TransferChunkSize.ble,
     String? groupId,
@@ -208,6 +209,7 @@ class TransferService {
       totalChunks: totalChunks,
       mimeType: mimeType,
       kind: kind,
+      transport: transport,
       imageIndex: imageIndex,
       groupId: groupId,
     );

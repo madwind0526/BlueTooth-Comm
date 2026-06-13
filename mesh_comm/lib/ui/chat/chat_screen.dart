@@ -600,6 +600,9 @@ class _ChatScreenState extends State<ChatScreen> {
           final t = entry.value;
           final isOut = t.direction == TransferDirection.outgoing;
           final label = isOut ? '전송 중' : '수신 중';
+          final routeLabel = t.meta.transport == TransferTransport.unknown
+              ? ''
+              : '[${t.meta.transport.label}] ';
           final icon = t.meta.kind == TransferKind.image
               ? Icons.image_outlined
               : Icons.insert_drive_file_outlined;
@@ -617,7 +620,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         children: [
                           Expanded(
                             child: Text(
-                              '$label: ${t.meta.fileName}',
+                              '$label: $routeLabel${t.meta.fileName}',
                               style: const TextStyle(
                                 color: Color(0xFF9E9EB8),
                                 fontSize: 11,

@@ -5,7 +5,7 @@ class MessagePolicy {
   static const int noticeMaxLength = 50;
   static const int maxTextPayloadBytes = 64 * 1024;
   static const Duration timedMessageReadTtl = Duration(minutes: 1);
-  static const Duration noticeCooldown = Duration(days: 1);
+  static const Duration noticeCooldown = Duration.zero;
   static const int shortNoticeTtl = 3;
   static const int longNoticeTtl = 7;
 }

@@ -8,6 +8,25 @@ enum TransferKind { file, image }
 /// 전송 방향.
 enum TransferDirection { outgoing, incoming }
 
+enum TransferTransport {
+  wifi('WiFi'),
+  ble('BLE'),
+  wifiBle('WiFi+BLE'),
+  unknown('?');
+
+  final String label;
+  const TransferTransport(this.label);
+
+  static TransferTransport fromWire(String? value) {
+    return switch (value) {
+      'wifi' => TransferTransport.wifi,
+      'ble' => TransferTransport.ble,
+      'wifiBle' => TransferTransport.wifiBle,
+      _ => TransferTransport.unknown,
+    };
+  }
+}
+
 /// 전송 상태.
 enum TransferStatus {
   waiting,     // 발신: 헤더 전송 전 / 수신: 헤더 수신 전
@@ -35,6 +54,7 @@ class TransferMeta {
   final int totalChunks;
   final String mimeType;
   final TransferKind kind;
+  final TransferTransport transport;
 
   /// 이미지 묶음 전송 시 이 이미지의 순서 (0-based). 단일 파일은 0.
   final int imageIndex;
@@ -49,6 +69,7 @@ class TransferMeta {
     required this.totalChunks,
     required this.mimeType,
     required this.kind,
+    this.transport = TransferTransport.unknown,
     this.imageIndex = 0,
     this.groupId,
   });
@@ -60,6 +81,7 @@ class TransferMeta {
         'chunks': totalChunks,
         'mime': mimeType,
         'kind': kind.name,
+        'transport': transport.name,
         'imgIdx': imageIndex,
         if (groupId != null) 'gid': groupId,
       };
@@ -71,6 +93,7 @@ class TransferMeta {
         totalChunks: j['chunks'] as int,
         mimeType: j['mime'] as String? ?? 'application/octet-stream',
         kind: j['kind'] == 'image' ? TransferKind.image : TransferKind.file,
+        transport: TransferTransport.fromWire(j['transport'] as String?),
         imageIndex: j['imgIdx'] as int? ?? 0,
         groupId: j['gid'] as String?,
       );

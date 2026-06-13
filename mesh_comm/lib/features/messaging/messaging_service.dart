@@ -273,7 +273,7 @@ class MessagingService {
     });
 
     // TransferService 초기화
-    _transfer.init(sendPacket: _sendPacketToNodeId);
+    _transfer.init(sendPacket: _sendTransferPacketToNodeId);
 
     // 전송 완료 시 자동으로 로컬에 파일 저장 (채팅창 열려있지 않아도 보존)
     // 그룹 전송(groupId != null)은 1:1 채팅 저장소를 오염시키지 않도록 제외.
@@ -400,7 +400,7 @@ class MessagingService {
       packet.signature = signature;
 
       // 4. 브로드캐스트 전송
-      final recipientCount = await _sendPacketToNodeIdCount(
+      final recipientCount = await _sendTargetedMeshPacketCount(
         packet,
         _hex(targetNodeId),
       );
@@ -543,7 +543,9 @@ class MessagingService {
         ? settings.lastShortNoticeAt
         : settings.lastLongNoticeAt;
 
-    if (lastUsedMs > 0 && nowMs - lastUsedMs < cooldown.inMilliseconds) {
+    if (cooldown > Duration.zero &&
+        lastUsedMs > 0 &&
+        nowMs - lastUsedMs < cooldown.inMilliseconds) {
       _log('NOTICE 전송 실패: 하루 1회 제한 mode=$mode');
       return false;
     }
@@ -554,10 +556,12 @@ class MessagingService {
 
     if (!sent) return false;
 
-    final nextSettings = mode == MessageSendMode.shortNotice
-        ? settings.copyWith(lastShortNoticeAt: nowMs)
-        : settings.copyWith(lastLongNoticeAt: nowMs);
-    await settingsService.save(nextSettings, notify: false);
+    if (cooldown > Duration.zero) {
+      final nextSettings = mode == MessageSendMode.shortNotice
+          ? settings.copyWith(lastShortNoticeAt: nowMs)
+          : settings.copyWith(lastLongNoticeAt: nowMs);
+      await settingsService.save(nextSettings, notify: false);
+    }
 
     _log('NOTICE 전송: mode=$mode "$text"');
     return true;
@@ -592,10 +596,10 @@ class MessagingService {
       _identity.myPrivateKeySeed,
     );
 
-    final recipientCount = await _sendPacketToNodeIdCount(
-      packet,
-      _hex(targetNodeId),
-    );
+    final targetNodeIdHex = _hex(targetNodeId);
+    final recipientCount = mode.isNotice
+        ? await _sendTargetedMeshPacketCount(packet, targetNodeIdHex)
+        : await _sendPacketToNodeIdCount(packet, targetNodeIdHex);
     if (recipientCount == 0) return false;
 
     await _db.saveMessage(
@@ -777,6 +781,29 @@ class MessagingService {
     await _sendPacketToNodeIdCount(packet, targetNodeIdHex);
   }
 
+  Future<void> _sendTransferPacketToNodeId(
+    MeshPacket packet,
+    String targetNodeIdHex,
+  ) async {
+    var sent = 0;
+    if (_lan.hasPeer(targetNodeIdHex)) {
+      final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
+      if (lanSent) sent++;
+    }
+
+    final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
+    if (bleDeviceId != null) {
+      final bleSent = await _ble.sendPacket(packet, bleDeviceId);
+      if (bleSent) sent++;
+    }
+
+    if (sent == 0) {
+      _log(
+        '[TRANSFER] no direct route for target=${targetNodeIdHex.substring(0, 8)}',
+      );
+    }
+  }
+
   Future<int> _sendPacketToNodeIdCount(
     MeshPacket packet,
     String targetNodeIdHex,
@@ -800,6 +827,42 @@ class MessagingService {
     }
 
     return _broadcastPacketWithRetry(packet);
+  }
+
+  Future<int> _sendTargetedMeshPacketCount(
+    MeshPacket packet,
+    String targetNodeIdHex,
+  ) async {
+    var count = 0;
+    count += await _sendDirectPacketToNodeIdCount(packet, targetNodeIdHex);
+    count += await _broadcastPacketWithRetry(packet);
+    return count;
+  }
+
+  Future<int> _sendDirectPacketToNodeIdCount(
+    MeshPacket packet,
+    String targetNodeIdHex,
+  ) async {
+    var count = 0;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final lanRetryAfter = _lanRetryAfterMs[targetNodeIdHex] ?? 0;
+    if (_lan.hasPeer(targetNodeIdHex) && nowMs >= lanRetryAfter) {
+      final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
+      if (lanSent) {
+        _lanRetryAfterMs.remove(targetNodeIdHex);
+        count++;
+      } else {
+        _lanRetryAfterMs[targetNodeIdHex] =
+            nowMs + const Duration(seconds: 5).inMilliseconds;
+      }
+    }
+
+    final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
+    if (bleDeviceId != null) {
+      final bleSent = await _ble.sendPacket(packet, bleDeviceId);
+      if (bleSent) count++;
+    }
+    return count;
   }
 
   String? _bleDeviceIdForNode(String nodeIdHex) {
@@ -827,14 +890,26 @@ class MessagingService {
       return null;
     }
     try {
-      final chunkSize = isLan ? TransferChunkSize.lan : TransferChunkSize.ble;
-      _log('[DIAG-TX] sendFile chunkSize=$chunkSize (LAN=$isLan)');
+      final transport = isLan && isBle
+          ? TransferTransport.wifiBle
+          : isLan
+              ? TransferTransport.wifi
+              : isBle
+                  ? TransferTransport.ble
+                  : TransferTransport.unknown;
+      final chunkSize = transport == TransferTransport.wifi
+          ? TransferChunkSize.lan
+          : TransferChunkSize.ble;
+      _log(
+        '[DIAG-TX] sendFile chunkSize=$chunkSize transport=${transport.label}',
+      );
       return await _transfer.sendFile(
         data: data,
         fileName: fileName,
         mimeType: mimeType,
         targetNodeIdHex: targetNodeIdHex,
         kind: kind,
+        transport: transport,
         imageIndex: imageIndex,
         chunkSize: chunkSize,
         groupId: groupId,
