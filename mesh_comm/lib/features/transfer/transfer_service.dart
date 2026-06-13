@@ -27,7 +27,11 @@ import '../../features/identity/identity_service.dart';
 import 'transfer_model.dart';
 
 /// 패킷 전송 콜백 타입 (MessagingService가 주입한다).
-typedef SendPacketFn = Future<void> Function(MeshPacket packet, String targetNodeIdHex);
+typedef SendPacketFn = Future<bool> Function(
+  MeshPacket packet,
+  String targetNodeIdHex,
+  TransferTransport transport,
+);
 
 class TransferService {
   static final TransferService _instance = TransferService._internal();
@@ -128,9 +132,14 @@ class TransferService {
         msgType: MsgType.fileCancel,
         targetNodeIdHex: targetNodeIdHex,
         payload: Uint8List.fromList(utf8.encode(tid)),
-      ).then((packet) => _sendPacket?.call(packet, targetNodeIdHex)).catchError(
-        (e) => _log('_sendCancelPacket[$attempt] error: $e'),
-      );
+      ).then(
+        (packet) =>
+            _sendPacket?.call(packet, targetNodeIdHex, TransferTransport.unknown) ??
+            Future<bool>.value(false),
+      ).catchError((e) {
+        _log('_sendCancelPacket[$attempt] error: $e');
+        return false;
+      });
     }
     send(0);
     Future.delayed(const Duration(milliseconds: 150), () => send(1));
@@ -241,8 +250,69 @@ class TransferService {
       payload: Uint8List.fromList(payload),
     );
     transfer.status = TransferStatus.transferring;
-    await _sendPacket?.call(packet, transfer.targetNodeIdHex);
+    await _sendPacket?.call(
+      packet,
+      transfer.targetNodeIdHex,
+      transfer.meta.transport,
+    );
     _startAckTimer(transfer);
+  }
+
+  Future<void> _sendAllWifiChunks(OutgoingTransfer transfer) async {
+    _cancelAckTimer(transfer.meta.tid);
+    while (_outgoing.containsKey(transfer.meta.tid) &&
+        transfer.sentChunks < transfer.meta.totalChunks) {
+      final idx = transfer.sentChunks;
+      final chunkSize = transfer.chunkSize;
+      final start = idx * chunkSize;
+      final end = (start + chunkSize).clamp(0, transfer.data.length);
+      final chunk = transfer.data.sublist(start, end);
+
+      final tidBytes = _tidToBytes(transfer.meta.tid);
+      final payload = Uint8List(tidBytes.length + 4 + chunk.length);
+      payload.setRange(0, tidBytes.length, tidBytes);
+      final bd = ByteData.sublistView(payload);
+      bd.setUint32(tidBytes.length, idx, Endian.big);
+      payload.setRange(tidBytes.length + 4, payload.length, chunk);
+
+      final packet = await _buildPacket(
+        msgType: MsgType.fileChunk,
+        targetNodeIdHex: transfer.targetNodeIdHex,
+        payload: payload,
+      );
+      final sent = await _sendPacket?.call(
+        packet,
+        transfer.targetNodeIdHex,
+        transfer.meta.transport,
+      );
+      if (sent != true) {
+        _outgoing.remove(transfer.meta.tid);
+        _emit(TransferFailed(
+          transfer.meta.tid,
+          reason: 'wifi send failed',
+          direction: TransferDirection.outgoing,
+        ));
+        return;
+      }
+      transfer.sentChunks++;
+      transfer.ackedChunks = transfer.sentChunks;
+      _emit(TransferProgress(
+        transfer.meta.tid,
+        progress: transfer.sentChunks / transfer.meta.totalChunks,
+        direction: TransferDirection.outgoing,
+      ));
+    }
+
+    if (_outgoing.remove(transfer.meta.tid) != null) {
+      transfer.status = TransferStatus.done;
+      _emit(TransferCompleted(
+        transfer.meta.tid,
+        data: transfer.data,
+        meta: transfer.meta,
+        direction: TransferDirection.outgoing,
+        contactNodeIdHex: transfer.targetNodeIdHex,
+      ));
+    }
   }
 
   Future<void> _sendNextChunk(OutgoingTransfer transfer) async {
@@ -267,7 +337,20 @@ class TransferService {
       payload: payload,
     );
     transfer.sentChunks++;
-    await _sendPacket?.call(packet, transfer.targetNodeIdHex);
+    final sent = await _sendPacket?.call(
+      packet,
+      transfer.targetNodeIdHex,
+      transfer.meta.transport,
+    );
+    if (sent != true) {
+      _outgoing.remove(transfer.meta.tid);
+      _emit(TransferFailed(
+        transfer.meta.tid,
+        reason: 'send failed',
+        direction: TransferDirection.outgoing,
+      ));
+      return;
+    }
     _emit(TransferProgress(
       transfer.meta.tid,
       progress: transfer.sentChunks / transfer.meta.totalChunks,
@@ -359,6 +442,10 @@ class TransferService {
         // 헤더 ack → 첫 청크 전송 시작
         _log('[DIAG-ACK] 헤더ACK → 첫 청크 전송');
         transfer.retryCount = 0;
+        if (transfer.meta.transport == TransferTransport.wifi) {
+          _sendAllWifiChunks(transfer);
+          return;
+        }
         _sendNextChunk(transfer);
         return;
       }
@@ -392,7 +479,8 @@ class TransferService {
       targetNodeIdHex: targetNodeIdHex,
       payload: Uint8List.fromList(payload),
     );
-    await _sendPacket?.call(packet, targetNodeIdHex);
+    final transport = _incoming[tid]?.meta.transport ?? TransferTransport.unknown;
+    await _sendPacket?.call(packet, targetNodeIdHex, transport);
   }
 
   Future<MeshPacket> _buildPacket({

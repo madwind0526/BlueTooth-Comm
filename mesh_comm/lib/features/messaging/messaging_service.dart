@@ -274,7 +274,7 @@ class MessagingService {
     });
 
     // TransferService 초기화
-    _transfer.init(sendPacket: _sendPacketToNodeId);
+    _transfer.init(sendPacket: _sendTransferPacketToNodeId);
 
     // 전송 완료 시 자동으로 로컬에 파일 저장 (채팅창 열려있지 않아도 보존)
     // 그룹 전송(groupId != null)은 1:1 채팅 저장소를 오염시키지 않도록 제외.
@@ -780,6 +780,25 @@ class MessagingService {
   /// 특정 nodeIdHex에게 직접 패킷을 전송한다. LAN 우선, 없으면 BLE.
   Future<void> _sendPacketToNodeId(MeshPacket packet, String targetNodeIdHex) async {
     await _sendPacketToNodeIdCount(packet, targetNodeIdHex);
+  }
+
+  Future<bool> _sendTransferPacketToNodeId(
+    MeshPacket packet,
+    String targetNodeIdHex,
+    TransferTransport transport,
+  ) async {
+    switch (transport) {
+      case TransferTransport.wifi:
+        if (!_lan.hasPeer(targetNodeIdHex)) return false;
+        return _lan.sendPacket(packet, targetNodeIdHex);
+      case TransferTransport.ble:
+        final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
+        if (bleDeviceId == null) return false;
+        return _ble.sendPacket(packet, bleDeviceId);
+      case TransferTransport.wifiBle:
+      case TransferTransport.unknown:
+        return await _sendPacketToNodeIdCount(packet, targetNodeIdHex) > 0;
+    }
   }
 
   Future<int> _sendPacketToNodeIdCount(
