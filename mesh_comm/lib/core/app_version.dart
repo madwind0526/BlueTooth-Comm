@@ -3,7 +3,7 @@ class AppVersion {
 
   static const version = String.fromEnvironment(
     'MESHCOMM_VERSION',
-    defaultValue: '1.2.X',
+    defaultValue: '1.2.Y',
   );
   static const buildTime = String.fromEnvironment(
     'MESHCOMM_BUILD_TIME',

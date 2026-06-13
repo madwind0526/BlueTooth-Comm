@@ -157,6 +157,7 @@ class MessagingService {
   // BLE deviceId → nodeId hex (직접 연결된 이웃 추적)
   final Map<String, String> _deviceToNodeHex = {};
   final Map<String, int> _lanRetryAfterMs = {};
+  final Set<String> _processingMessageIds = {};
 
   // seen_messages 정리 타이머 (R-09: 30분 주기)
   Timer? _cleanSeenTimer;
@@ -273,7 +274,7 @@ class MessagingService {
     });
 
     // TransferService 초기화
-    _transfer.init(sendPacket: _sendTransferPacketToNodeId);
+    _transfer.init(sendPacket: _sendPacketToNodeId);
 
     // 전송 완료 시 자동으로 로컬에 파일 저장 (채팅창 열려있지 않아도 보존)
     // 그룹 전송(groupId != null)은 1:1 채팅 저장소를 오염시키지 않도록 제외.
@@ -400,7 +401,7 @@ class MessagingService {
       packet.signature = signature;
 
       // 4. 브로드캐스트 전송
-      final recipientCount = await _sendTargetedMeshPacketCount(
+      final recipientCount = await _sendPacketToNodeIdCount(
         packet,
         _hex(targetNodeId),
       );
@@ -781,29 +782,6 @@ class MessagingService {
     await _sendPacketToNodeIdCount(packet, targetNodeIdHex);
   }
 
-  Future<void> _sendTransferPacketToNodeId(
-    MeshPacket packet,
-    String targetNodeIdHex,
-  ) async {
-    var sent = 0;
-    if (_lan.hasPeer(targetNodeIdHex)) {
-      final lanSent = await _lan.sendPacket(packet, targetNodeIdHex);
-      if (lanSent) sent++;
-    }
-
-    final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
-    if (bleDeviceId != null) {
-      final bleSent = await _ble.sendPacket(packet, bleDeviceId);
-      if (bleSent) sent++;
-    }
-
-    if (sent == 0) {
-      _log(
-        '[TRANSFER] no direct route for target=${targetNodeIdHex.substring(0, 8)}',
-      );
-    }
-  }
-
   Future<int> _sendPacketToNodeIdCount(
     MeshPacket packet,
     String targetNodeIdHex,
@@ -1020,6 +998,7 @@ class MessagingService {
 
     // ── Step 1: msg_id 중복 확인 ─────────────────────────────────────────────
     final alreadySeen = await _db.isMessageSeen(packet.msgId);
+    final msgIdHex = _hex(packet.msgId);
     if (alreadySeen) {
       _log('DROP(중복): ${_hexShort(packet.msgId)}');
       return;
@@ -1028,8 +1007,14 @@ class MessagingService {
     // ── Step 2: 서명 검증 (markMessageSeen은 검증 후에 수행) ─────────────────
     // C-2 수정: DoS 방지 — 위조 패킷으로 정상 패킷을 차단하는 것을 막기 위해
     // 서명 검증 성공 후에만 seen 캐시에 등록한다.
+    if (!_processingMessageIds.add(msgIdHex)) {
+      _log('DROP(in-flight duplicate): ${_hexShort(packet.msgId)}');
+      return;
+    }
+
     final senderPublicKey = await _resolveSenderPublicKey(packet, fromDeviceId);
     if (senderPublicKey == null) {
+      _processingMessageIds.remove(msgIdHex);
       _log('DROP(공개키 없음): ${_hexShort(packet.msgId)} type=${packet.msgType}');
       return;
     }
@@ -1039,6 +1024,7 @@ class MessagingService {
       senderPublicKey,
     );
     if (!signatureValid) {
+      _processingMessageIds.remove(msgIdHex);
       _log(
         'DROP(서명 불일치): ${_hexShort(packet.msgId)} sender=${_hexShort(packet.senderId)}',
       );
@@ -1047,6 +1033,7 @@ class MessagingService {
 
     // ── Step 3: markMessageSeen (서명 검증 성공 후) ───────────────────────────
     await _db.markMessageSeen(packet.msgId);
+    _processingMessageIds.remove(msgIdHex);
 
     // ── Step 4: msg_type 별 처리 ──────────────────────────────────────────────
     switch (packet.msgType) {
