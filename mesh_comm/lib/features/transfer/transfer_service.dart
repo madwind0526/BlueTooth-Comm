@@ -49,7 +49,7 @@ class TransferService {
   Timer? _incomingWatchdog;
   static const _incomingTimeout = Duration(seconds: 20);
 
-  static const _ackTimeout = Duration(seconds: 15);
+  static const _ackTimeout = Duration(seconds: 8);
   static const _maxRetries = 3;
 
   final StreamController<TransferEvent> _eventController =
@@ -180,6 +180,11 @@ class TransferService {
     }
 
     // 마지막 보낸 청크를 재전송 (sentChunks를 하나 되돌려서 재시도)
+    if (transfer.sentChunks == 0 && transfer.ackedChunks == 0) {
+      _sendHeader(transfer);
+      return;
+    }
+
     transfer.sentChunks = (transfer.sentChunks - 1).clamp(0, transfer.meta.totalChunks);
     _sendNextChunk(transfer);
   }
@@ -237,6 +242,7 @@ class TransferService {
     );
     transfer.status = TransferStatus.transferring;
     await _sendPacket?.call(packet, transfer.targetNodeIdHex);
+    _startAckTimer(transfer);
   }
 
   Future<void> _sendNextChunk(OutgoingTransfer transfer) async {
@@ -352,6 +358,7 @@ class TransferService {
       if (chunk == -1) {
         // 헤더 ack → 첫 청크 전송 시작
         _log('[DIAG-ACK] 헤더ACK → 첫 청크 전송');
+        transfer.retryCount = 0;
         _sendNextChunk(transfer);
         return;
       }

@@ -868,13 +868,11 @@ class MessagingService {
       return null;
     }
     try {
-      final transport = isLan && isBle
-          ? TransferTransport.wifiBle
-          : isLan
-              ? TransferTransport.wifi
-              : isBle
-                  ? TransferTransport.ble
-                  : TransferTransport.unknown;
+      final transport = isLan
+          ? TransferTransport.wifi
+          : isBle
+              ? TransferTransport.ble
+              : TransferTransport.unknown;
       final chunkSize = transport == TransferTransport.wifi
           ? TransferChunkSize.lan
           : TransferChunkSize.ble;
