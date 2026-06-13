@@ -2,8 +2,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:mesh_comm/core/ble/ble_service.dart';
 import 'package:mesh_comm/core/crypto/crypto_service.dart';
@@ -153,11 +155,13 @@ class MessagingService {
   StreamSubscription<List<String>>? _lanConnectionSubscription;
   Set<String> _knownBleDeviceIds = {};
   Set<String> _knownLanPeerIds = {};
+  bool _transferNetworkResetInProgress = false;
 
   // BLE deviceId → nodeId hex (직접 연결된 이웃 추적)
   final Map<String, String> _deviceToNodeHex = {};
   final Map<String, int> _lanRetryAfterMs = {};
   final Set<String> _processingMessageIds = {};
+  final Map<String, _TransferProbeWaiter> _pendingTransferProbes = {};
 
   // seen_messages 정리 타이머 (R-09: 30분 주기)
   Timer? _cleanSeenTimer;
@@ -190,8 +194,40 @@ class MessagingService {
   /// LAN 피어 목록 변경 스트림 (UI 업데이트용).
   Stream<List<String>> get lanPeersStream => _lan.connectedPeersStream;
 
+  bool get isLanRunning => _lan.isRunning;
   Future<void> startLan() => _lan.start();
   Future<void> stopLan() => _lan.stop();
+
+  /// Called when the app returns to foreground (screen on after Doze).
+  /// Forces a fresh LAN discovery cycle, then signals BLE peers via
+  /// KEY_ANNOUNCE so they can connect to us via LAN immediately using
+  /// their cached address — bypassing the UDP beacon delay.
+  Future<void> notifyWakeup() async {
+    if (!_initialized) return;
+    // Do NOT stop+start LAN here — file picker close also fires AppLifecycleState.resumed,
+    // which would drop all TCP connections right before sendFile() is called.
+    if (!_lan.isRunning) {
+      await _lan.start();
+    } else {
+      _lan.tryReconnectCached();
+    }
+    await broadcastKeyAnnounce(force: true);
+  }
+
+  /// Handles WiFi/network state changes from connectivity_plus.
+  /// Starts LAN when a local network appears; stops it when all local
+  /// networks disappear. This recovers from Android Doze-mode drops.
+  void _handleConnectivityChange(List<ConnectivityResult> results) {
+    final hasLocal = results.contains(ConnectivityResult.wifi) ||
+        results.contains(ConnectivityResult.ethernet);
+    if (hasLocal && !_lan.isRunning) {
+      debugPrint('[Connectivity] local network up — starting LAN');
+      _lan.start();
+    } else if (!hasLocal && _lan.isRunning) {
+      debugPrint('[Connectivity] local network down — stopping LAN');
+      _lan.stop();
+    }
+  }
 
   /// [nodeIdHex]가 직접 BLE 또는 LAN으로 연결된 이웃인지 확인한다.
   bool isDirectlyConnected(String nodeIdHex) =>
@@ -235,6 +271,15 @@ class MessagingService {
     // 콜백 주입은 앱 부트스트랩 레이어의 책임이다.
 
     _initialized = true;
+
+    // Android: auto-restart LAN when WiFi connects/disconnects (handles Doze recovery).
+    // Windows: handles ethernet cable plug/unplug.
+    // Subscription runs for the app lifetime (singleton) — no cancel needed.
+    if (!Platform.isIOS) {
+      Connectivity()
+          .onConnectivityChanged
+          .listen(_handleConnectivityChange);
+    }
 
     _connectionSubscription = _ble.connectedDevicesStream.listen(
       _handleConnectedDevices,
@@ -281,6 +326,10 @@ class MessagingService {
     _transfer.transferStream.listen((event) {
       if (event is TransferCompleted && event.meta.groupId == null) {
         unawaited(_saveTransferFile(event));
+      } else if (event is TransferFailed &&
+          event.direction == TransferDirection.outgoing &&
+          event.reason != 'cancelled') {
+        unawaited(_resetTransferNetworks());
       }
     });
 
@@ -814,6 +863,7 @@ class MessagingService {
         // LAN broadcast as backup for TCP zombie connections.
         // Routes via other LAN peers (e.g. S26 → BLE relay). No BLE broadcast, so no GATT overload.
         unawaited(_lan.broadcastPacket(packet));
+        await _sendDirectBleBackupIfUseful(packet, targetNodeIdHex);
         return 1;
       }
       _lanRetryAfterMs[targetNodeIdHex] =
@@ -827,6 +877,34 @@ class MessagingService {
     }
 
     return _broadcastPacketWithRetry(packet);
+  }
+
+  Future<void> _sendDirectBleBackupIfUseful(
+    MeshPacket packet,
+    String targetNodeIdHex,
+  ) async {
+    if (!_shouldUseDirectBleBackup(packet)) return;
+
+    final bleDeviceId = _bleDeviceIdForNode(targetNodeIdHex);
+    if (bleDeviceId == null) return;
+
+    final bleSent = await _ble.sendPacket(packet, bleDeviceId);
+    _log(
+      'LAN direct send used BLE backup: target=${targetNodeIdHex.substring(0, 8)} '
+      'type=${packet.msgType} sent=$bleSent',
+    );
+  }
+
+  bool _shouldUseDirectBleBackup(MeshPacket packet) {
+    switch (packet.msgType) {
+      case MsgType.fileHeader:
+      case MsgType.fileChunk:
+      case MsgType.fileAck:
+      case MsgType.fileCancel:
+        return false;
+      default:
+        return true;
+    }
   }
 
   Future<int> _sendTargetedMeshPacketCount(
@@ -886,15 +964,19 @@ class MessagingService {
     final isBle = _deviceToNodeHex.values.contains(targetNodeIdHex);
     _log('[DIAG-TX] sendFile 요청: target=${targetNodeIdHex.substring(0, 8)} isLAN=$isLan isBLE=$isBle isDirect=${isDirectlyConnected(targetNodeIdHex)}');
     if (!isDirectlyConnected(targetNodeIdHex)) {
-      _log('[DIAG-TX] sendFile 차단: 직접 연결 없음 (LAN peers: ${_lan.connectedPeerIds}, BLE map: ${_deviceToNodeHex.values.take(3)})');
+      _log(
+        '[DIAG-TX] sendFile blocked: target is not a direct neighbor '
+        '(files/images are not relayed)',
+      );
       return null;
     }
     try {
-      final transport = isLan
-          ? TransferTransport.wifi
-          : isBle
-              ? TransferTransport.ble
-              : TransferTransport.unknown;
+      final transport = await _selectTransferTransport(targetNodeIdHex);
+      if (transport == null) {
+        _log('[DIAG-TX] sendFile blocked: no live transfer path after probe');
+        await _resetTransferNetworks();
+        return null;
+      }
       final chunkSize = transport == TransferTransport.wifi
           ? TransferChunkSize.lan
           : TransferChunkSize.ble;
@@ -915,6 +997,59 @@ class MessagingService {
     } catch (e) {
       _log('sendFile 오류: $e');
       return null;
+    }
+  }
+
+  Future<TransferTransport?> _selectTransferTransport(
+    String targetNodeIdHex,
+  ) async {
+    if (_lan.hasPeer(targetNodeIdHex)) {
+      final probeOk = await _probeTransferPath(targetNodeIdHex, TransferTransport.wifi);
+      _log('[DIAG-PROBE] WiFi probe result=$probeOk for ${targetNodeIdHex.substring(0, 8)}');
+      if (probeOk) {
+        return TransferTransport.wifi;
+      }
+    }
+
+    if (_bleDeviceIdForNode(targetNodeIdHex) != null &&
+        await _probeTransferPath(targetNodeIdHex, TransferTransport.ble)) {
+      return TransferTransport.ble;
+    }
+
+    return null;
+  }
+
+  Future<void> _resetTransferNetworks() async {
+    if (_transferNetworkResetInProgress) return;
+    _transferNetworkResetInProgress = true;
+    // LAN is intentionally NOT restarted here. Restarting LAN on a probe failure
+    // drops all TCP connections, so the next sendFile attempt immediately fails
+    // again (peers haven't reconnected yet), creating a vicious cycle.
+    final shouldResetBle =
+        _ble.scanRequested ||
+        _ble.advertisingRequested ||
+        _ble.connectedDeviceIds.isNotEmpty;
+    try {
+      for (final waiter in _pendingTransferProbes.values) {
+        if (!waiter.completer.isCompleted) {
+          waiter.completer.complete(false);
+        }
+      }
+      _pendingTransferProbes.clear();
+      _lanRetryAfterMs.clear();
+      if (shouldResetBle) {
+        _deviceToNodeHex.clear();
+      }
+      _log('Transfer paths unavailable; resetting BLE=$shouldResetBle (LAN preserved).');
+      if (shouldResetBle) {
+        await _ble.stopScan();
+        await _ble.startScan();
+        await _ble.startAdvertising();
+      }
+    } catch (e) {
+      _log('transfer network reset error: $e');
+    } finally {
+      _transferNetworkResetInProgress = false;
     }
   }
 
@@ -1073,8 +1208,7 @@ class MessagingService {
       case MsgType.adminNotice:
         await _handleAdminNoticePacket(packet);
       case MsgType.ack:
-        // Phase 2 구현 예정
-        _log('ACK 수신 (Phase 2 미구현): ${_hexShort(packet.msgId)}');
+        await _handleAckPacket(packet, fromDeviceId);
       case MsgType.fileHeader:
         final fhForMe = _bytesEqual(packet.targetId, _identity.myNodeId);
         _log('[DIAG-RX] fileHeader 도착: forMe=$fhForMe sender=${_hexShort(packet.senderId)}');
@@ -1302,6 +1436,12 @@ class MessagingService {
       // 새 이웃이 자신의 키를 알려오면 내 키도 응답하여 양쪽 ECDH 준비를 끝낸다.
       await broadcastKeyAnnounce();
     }
+
+    // BLE wakeup hint: if this KEY_ANNOUNCE arrived via BLE and we have the
+    // sender's IP cached, connect via LAN immediately instead of waiting for
+    // the next UDP beacon (5s interval). No-op if already connected or no cache.
+    _lan.tryConnectCached(_hex(contactInfo.nodeId));
+
     _scheduleDiagnosticMessage(contactInfo.nodeId);
   }
 
@@ -1468,6 +1608,142 @@ class MessagingService {
       if (summaries.length >= 15) break;
     }
     return summaries;
+  }
+
+  Future<bool> _probeTransferPath(
+    String targetNodeIdHex,
+    TransferTransport transport,
+  ) async {
+    final probeId = _hex(MeshPacket.generateMsgId());
+    final completer = Completer<bool>();
+    _pendingTransferProbes[probeId] = _TransferProbeWaiter(
+      targetNodeIdHex: targetNodeIdHex,
+      transport: transport,
+      completer: completer,
+    );
+
+    try {
+      final packet = await _createAckPacket(
+        targetNodeIdHex: targetNodeIdHex,
+        payload: {
+          'kind': 'transferProbe',
+          'id': probeId,
+          'transport': transport.name,
+        },
+      );
+
+      final sent = switch (transport) {
+        TransferTransport.wifi => _lan.hasPeer(targetNodeIdHex)
+            ? await _lan.sendPacket(packet, targetNodeIdHex)
+            : false,
+        TransferTransport.ble => await (() async {
+            final deviceId = _bleDeviceIdForNode(targetNodeIdHex);
+            return deviceId != null && await _ble.sendPacket(packet, deviceId);
+          })(),
+        TransferTransport.wifiBle || TransferTransport.unknown => false,
+      };
+      if (!sent) return false;
+
+      return await completer.future.timeout(
+        const Duration(milliseconds: 3500),
+        onTimeout: () {
+          _log('[DIAG-PROBE] ${transport.name} probe TIMEOUT for ${targetNodeIdHex.substring(0, 8)}');
+          return false;
+        },
+      );
+    } finally {
+      _pendingTransferProbes.remove(probeId);
+    }
+  }
+
+  Future<void> _handleAckPacket(MeshPacket packet, String fromDeviceId) async {
+    Map<String, dynamic> payload;
+    try {
+      payload = jsonDecode(utf8.decode(packet.payload)) as Map<String, dynamic>;
+    } catch (_) {
+      _log('ACK received: ${_hexShort(packet.msgId)}');
+      return;
+    }
+
+    final kind = payload['kind'] as String?;
+    if (kind == 'transferProbe') {
+      await _replyTransferProbe(packet, fromDeviceId, payload);
+      return;
+    }
+    if (kind == 'transferProbeResp') {
+      _completeTransferProbe(packet, payload);
+      return;
+    }
+
+    _log('ACK received: ${_hexShort(packet.msgId)}');
+  }
+
+  Future<void> _replyTransferProbe(
+    MeshPacket packet,
+    String fromDeviceId,
+    Map<String, dynamic> payload,
+  ) async {
+    if (!_bytesEqual(packet.targetId, _identity.myNodeId)) return;
+    final probeId = payload['id'] as String?;
+    if (probeId == null || probeId.isEmpty) return;
+    _log('[DIAG-PROBE] Received probe from ${_hex(packet.senderId).substring(0, 8)}, probeId=${probeId.substring(0, 8)}, fromDev=${fromDeviceId.substring(0, 8)}');
+
+    final response = await _createAckPacket(
+      targetNodeIdHex: _hex(packet.senderId),
+      payload: {'kind': 'transferProbeResp', 'id': probeId},
+    );
+
+    final senderHex = _hex(packet.senderId);
+    final isLanPeer = fromDeviceId == senderHex;
+    final replied = isLanPeer
+        ? await _lan.sendPacket(response, senderHex)
+        : await _ble.sendPacket(response, fromDeviceId);
+    _log(
+      'Transfer probe response: target=${senderHex.substring(0, 8)} '
+      'via=${isLanPeer ? 'wifi' : 'ble'} sent=$replied',
+    );
+  }
+
+  void _completeTransferProbe(
+    MeshPacket packet,
+    Map<String, dynamic> payload,
+  ) {
+    final probeId = payload['id'] as String?;
+    if (probeId == null) return;
+
+    final waiter = _pendingTransferProbes[probeId];
+    if (waiter == null || waiter.completer.isCompleted) {
+      _log('[DIAG-PROBE] probeResp: waiter missing or completed (probeId=${probeId.substring(0, 8)})');
+      return;
+    }
+    if (waiter.targetNodeIdHex != _hex(packet.senderId)) {
+      _log('[DIAG-PROBE] probeResp: sender mismatch waiter=${waiter.targetNodeIdHex.substring(0, 8)} got=${_hex(packet.senderId).substring(0, 8)}');
+      return;
+    }
+
+    waiter.completer.complete(true);
+    _log(
+      'Transfer probe OK: target=${waiter.targetNodeIdHex.substring(0, 8)} '
+      'transport=${waiter.transport.label}',
+    );
+  }
+
+  Future<MeshPacket> _createAckPacket({
+    required String targetNodeIdHex,
+    required Map<String, dynamic> payload,
+  }) async {
+    final packet = MeshPacket.create(
+      senderId: _identity.myNodeId,
+      targetId: _fromHex(targetNodeIdHex),
+      msgType: MsgType.ack,
+      payload: Uint8List.fromList(utf8.encode(jsonEncode(payload))),
+      ttl: 0,
+    );
+    packet.signature = await _crypto.sign(
+      packet.toSignableBytes(),
+      _identity.myPrivateKeySeed,
+    );
+    return packet;
   }
 
   Future<void> _handlePingPacket(MeshPacket packet, String fromDeviceId) async {
@@ -1816,4 +2092,16 @@ class MessagingService {
     // ignore: avoid_print
     print('[MessagingService] $message');
   }
+}
+
+class _TransferProbeWaiter {
+  final String targetNodeIdHex;
+  final TransferTransport transport;
+  final Completer<bool> completer;
+
+  const _TransferProbeWaiter({
+    required this.targetNodeIdHex,
+    required this.transport,
+    required this.completer,
+  });
 }
