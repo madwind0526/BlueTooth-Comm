@@ -652,7 +652,7 @@ class BleService {
     _connectionSubscriptions.remove(deviceId);
     _notifyConnectionChange();
 
-    // 끊김 감지 즉시 재스캔 — scanTimer/rescanTimer 만료를 기다리지 않고 3초 후 재시도
+    // Trigger rescan immediately on disconnect instead of waiting for scanTimer/rescanTimer expiry.
     if (_scanRequested) {
       _rescanTimer?.cancel();
       _rescanTimer = Timer(const Duration(seconds: 3), () {

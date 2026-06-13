@@ -25,6 +25,19 @@
 
 **PC 간 연결**: 직접 연결 없음. 폰 메시 네트워크를 통해서만 PC↔PC 통신.
 
+## Code Comment Language (MANDATORY)
+
+**All code comments must be written in English.** Korean characters in source files cause build/encoding errors.
+
+This applies to:
+- `//` inline comments
+- `/* */` block comments
+- `///` doc comments
+
+UI strings (user-visible text in widgets) remain in Korean as-is.
+
+---
+
 ## 빌드 & 커밋 규칙 (MANDATORY)
 
 > **이 규칙은 반드시 지켜야 한다. 예외 없음.**
