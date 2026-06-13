@@ -251,16 +251,14 @@ class BleService {
         _log('Scan completed — 15초 후 재스캔');
         // 15초 후 재스캔 (연결된 기기가 maxConnections 미만이면)
         if (!_scanRequested) return;
-        final shouldRescan = Platform.isWindows
-            ? connectedDeviceIds.isEmpty
-            : connectedDeviceIds.length < BleConstants.maxConnections;
+        final shouldRescan =
+            connectedDeviceIds.length < BleConstants.maxConnections;
         if (!shouldRescan) return;
         _rescanTimer?.cancel();
         _rescanTimer = Timer(const Duration(seconds: 15), () {
           if (!_scanRequested) return;
-          final stillNeedsScan = Platform.isWindows
-              ? connectedDeviceIds.isEmpty
-              : connectedDeviceIds.length < BleConstants.maxConnections;
+          final stillNeedsScan =
+              connectedDeviceIds.length < BleConstants.maxConnections;
           if (stillNeedsScan) {
             unawaited(startScan());
           }
@@ -653,6 +651,14 @@ class BleService {
     _connectionSubscriptions[deviceId]?.cancel();
     _connectionSubscriptions.remove(deviceId);
     _notifyConnectionChange();
+
+    // 끊김 감지 즉시 재스캔 — scanTimer/rescanTimer 만료를 기다리지 않고 3초 후 재시도
+    if (_scanRequested) {
+      _rescanTimer?.cancel();
+      _rescanTimer = Timer(const Duration(seconds: 3), () {
+        if (_scanRequested) unawaited(startScan());
+      });
+    }
   }
 
   /// Android Peripheral GATT 서버와 메시지 characteristic을 등록한다.
