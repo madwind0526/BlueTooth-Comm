@@ -233,6 +233,10 @@ class MessagingService {
   bool isDirectlyConnected(String nodeIdHex) =>
       _deviceToNodeHex.values.contains(nodeIdHex) || _lan.hasPeer(nodeIdHex);
 
+  bool isLanConnectedTo(String nodeIdHex) => _lan.hasPeer(nodeIdHex);
+  bool isBleConnectedTo(String nodeIdHex) =>
+      _deviceToNodeHex.values.contains(nodeIdHex);
+
   /// 파일/이미지 전송 이벤트 스트림.
   Stream<TransferEvent> get transferStream => _transfer.transferStream;
 
@@ -1022,13 +1026,9 @@ class MessagingService {
   Future<void> _resetTransferNetworks() async {
     if (_transferNetworkResetInProgress) return;
     _transferNetworkResetInProgress = true;
-    // LAN is intentionally NOT restarted here. Restarting LAN on a probe failure
-    // drops all TCP connections, so the next sendFile attempt immediately fails
-    // again (peers haven't reconnected yet), creating a vicious cycle.
-    final shouldResetBle =
-        _ble.scanRequested ||
-        _ble.advertisingRequested ||
-        _ble.connectedDeviceIds.isNotEmpty;
+    // Only clear probe state and retry backoffs. Do NOT restart LAN or BLE,
+    // and do NOT clear _deviceToNodeHex. Restarting transports drops all
+    // connections, making the next sendFile attempt also fail immediately.
     try {
       for (final waiter in _pendingTransferProbes.values) {
         if (!waiter.completer.isCompleted) {
@@ -1037,15 +1037,7 @@ class MessagingService {
       }
       _pendingTransferProbes.clear();
       _lanRetryAfterMs.clear();
-      if (shouldResetBle) {
-        _deviceToNodeHex.clear();
-      }
-      _log('Transfer paths unavailable; resetting BLE=$shouldResetBle (LAN preserved).');
-      if (shouldResetBle) {
-        await _ble.stopScan();
-        await _ble.startScan();
-        await _ble.startAdvertising();
-      }
+      _log('Transfer paths reset: cleared probe state and retry backoffs.');
     } catch (e) {
       _log('transfer network reset error: $e');
     } finally {

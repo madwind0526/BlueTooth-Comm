@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 // lib/ui/chat/chat_screen.dart
 
 import 'dart:async';
@@ -222,6 +224,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final isOurs = _activeTransfers.containsKey(event.tid) ||
           (event is TransferStarted && event.contactNodeIdHex == targetHex);
       if (!isOurs) return;
+      final failedEvent = event is TransferFailed ? event : null;
 
       setState(() {
         switch (event) {
@@ -254,6 +257,13 @@ class _ChatScreenState extends State<ChatScreen> {
             _outgoingImageCache.remove(event.tid);
         }
       });
+      if (failedEvent != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('파일 전송 실패: ${failedEvent.reason}. 네트워크 확인 후 다시 시도해 주세요.'),
+          ),
+        );
+      }
     });
   }
 
@@ -296,6 +306,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String get _contactHex =>
       widget.contact.nodeId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
+  // ignore: unused_element
   bool _checkDirectConnection() {
     if (MessagingService().isDirectlyConnected(_contactHex)) return true;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -304,27 +315,58 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
-  Future<void> _pickAndSendFile() async {
-    if (!_checkDirectConnection()) return;
+  Future<void> _showNoTransferPathDialog(
+    String itemLabel, {
+    bool isLan = false,
+    bool isBle = false,
+  }) async {
+    if (!mounted) return;
+    final wifiStatus = isLan ? '연결됨' : '없음';
+    final bleStatus = isBle ? '연결됨' : '없음';
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('연결 경로 없음'),
+        content: Text(
+          '$itemLabel 전송 가능한 직접 경로가 없습니다.\n'
+          'Wi-Fi: $wifiStatus / BLE: $bleStatus\n'
+          '네트워크 상태를 확인한 뒤 다시 시도해 주세요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
 
+  Future<void> _pickAndSendFile() async {
     const typeGroup = XTypeGroup(label: 'files');
     final file = await openFile(acceptedTypeGroups: [typeGroup]);
     if (file == null) return;
 
     final data = await file.readAsBytes();
     if (!mounted) return;
-    await MessagingService().sendFile(
+    final isLan = MessagingService().isLanConnectedTo(_contactHex);
+    final isBle = MessagingService().isBleConnectedTo(_contactHex);
+    final tid = await MessagingService().sendFile(
       data: Uint8List.fromList(data),
       fileName: file.name,
       mimeType: 'application/octet-stream',
       targetNodeIdHex: _contactHex,
       kind: TransferKind.file,
     );
+    if (tid == null && mounted) {
+      await _showNoTransferPathDialog('파일', isLan: isLan, isBle: isBle);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('파일 전송 가능한 경로가 없습니다. 다시 시도해 주세요.')),
+      );
+    }
   }
 
   Future<void> _pickAndSendImages() async {
-    if (!_checkDirectConnection()) return;
-
     const imageTypes = XTypeGroup(
       label: 'images',
       extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'],
@@ -335,6 +377,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
 
     final bytes = Uint8List.fromList(await file.readAsBytes());
+    final isLan = MessagingService().isLanConnectedTo(_contactHex);
+    final isBle = MessagingService().isBleConnectedTo(_contactHex);
     final tid = await MessagingService().sendFile(
       data: bytes,
       fileName: file.name,
@@ -344,6 +388,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (tid != null && mounted) {
       setState(() => _outgoingImageCache[tid] = bytes);
+    } else if (tid == null && mounted) {
+      await _showNoTransferPathDialog('이미지', isLan: isLan, isBle: isBle);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('이미지 전송 가능한 경로가 없습니다. 다시 시도해 주세요.')),
+      );
     }
   }
 

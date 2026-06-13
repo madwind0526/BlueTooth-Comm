@@ -116,11 +116,23 @@ class TransferService {
     if (_outgoing.containsKey(tid)) {
       final transfer = _outgoing.remove(tid)!;
       if (notify) _sendCancelPacket(tid, transfer.targetNodeIdHex);
-      _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.outgoing));
+      _emit(TransferFailed(
+        tid,
+        reason: 'cancelled',
+        direction: TransferDirection.outgoing,
+        meta: transfer.meta,
+        contactNodeIdHex: transfer.targetNodeIdHex,
+      ));
     } else if (_incoming.containsKey(tid)) {
       final transfer = _incoming.remove(tid)!;
       if (notify) _sendCancelPacket(tid, transfer.senderNodeIdHex);
-      _emit(TransferFailed(tid, reason: 'cancelled', direction: TransferDirection.incoming));
+      _emit(TransferFailed(
+        tid,
+        reason: 'cancelled',
+        direction: TransferDirection.incoming,
+        meta: transfer.meta,
+        contactNodeIdHex: transfer.senderNodeIdHex,
+      ));
     }
     _log('cancelTransfer: $tid notify=$notify');
   }
@@ -183,8 +195,15 @@ class TransferService {
     _log('[DIAG-ACK] 타임아웃: tid=${tid.substring(0, 8)} chunk=${transfer.sentChunks - 1} retry=${transfer.retryCount}');
 
     if (transfer.retryCount > _maxRetries) {
+      _cancelAckTimer(tid);
       _outgoing.remove(tid);
-      _emit(TransferFailed(tid, reason: 'timeout after $_maxRetries retries', direction: TransferDirection.outgoing));
+      _emit(TransferFailed(
+        tid,
+        reason: 'timeout after $_maxRetries retries',
+        direction: TransferDirection.outgoing,
+        meta: transfer.meta,
+        contactNodeIdHex: transfer.targetNodeIdHex,
+      ));
       return;
     }
 
@@ -260,6 +279,10 @@ class TransferService {
 
   Future<void> _sendAllWifiChunks(OutgoingTransfer transfer) async {
     _cancelAckTimer(transfer.meta.tid);
+    // Yield to the event loop before starting chunks so Flutter can render
+    // the TransferStarted banner. Without this, socket.flush() completes as
+    // microtasks and the entire loop finishes before the next vsync frame.
+    await Future.delayed(Duration.zero);
     while (_outgoing.containsKey(transfer.meta.tid) &&
         transfer.sentChunks < transfer.meta.totalChunks) {
       final idx = transfer.sentChunks;
@@ -291,6 +314,8 @@ class TransferService {
           transfer.meta.tid,
           reason: 'wifi send failed',
           direction: TransferDirection.outgoing,
+          meta: transfer.meta,
+          contactNodeIdHex: transfer.targetNodeIdHex,
         ));
         return;
       }
@@ -301,6 +326,10 @@ class TransferService {
         progress: transfer.sentChunks / transfer.meta.totalChunks,
         direction: TransferDirection.outgoing,
       ));
+      // Yield every 20 chunks so Flutter vsync can render progress updates.
+      if (transfer.sentChunks % 20 == 0) {
+        await Future.delayed(Duration.zero);
+      }
     }
 
     if (_outgoing.remove(transfer.meta.tid) != null) {
@@ -348,6 +377,8 @@ class TransferService {
         transfer.meta.tid,
         reason: 'send failed',
         direction: TransferDirection.outgoing,
+        meta: transfer.meta,
+        contactNodeIdHex: transfer.targetNodeIdHex,
       ));
       return;
     }
@@ -434,7 +465,13 @@ class TransferService {
         _cancelAckTimer(tid);
         transfer.status = TransferStatus.failed;
         _outgoing.remove(tid);
-        _emit(TransferFailed(tid, reason: 'ack not ok', direction: TransferDirection.outgoing));
+        _emit(TransferFailed(
+          tid,
+          reason: 'ack not ok',
+          direction: TransferDirection.outgoing,
+          meta: transfer.meta,
+          contactNodeIdHex: transfer.targetNodeIdHex,
+        ));
         return;
       }
 
