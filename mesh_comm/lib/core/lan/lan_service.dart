@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -92,6 +93,8 @@ class LanService {
       _running ? List.unmodifiable(_peers.keys) : const [];
 
   int get connectedCount => _running ? _peers.length : 0;
+
+  bool get isRunning => _running;
 
   bool hasPeer(String nodeIdHex) => _running && _peers.containsKey(nodeIdHex);
 
@@ -316,8 +319,28 @@ class LanService {
               _notifyChange();
               _log('Peer registered via incoming: $resolvedId');
             } else {
-              socket.destroy();
-              return;
+              // Simultaneous-open: both nodes connected to each other at the same time.
+              // Tie-break deterministically: the node with the HIGHER nodeId hex
+              // closes its own outgoing and accepts the remote's incoming instead.
+              // The LOWER nodeId node keeps its own outgoing (handled in outgoing path).
+              final myHex = _myNodeId != null ? _hexOf(_myNodeId!) : '';
+              if (myHex.compareTo(resolvedId!) > 0) {
+                // I have higher nodeId → close my existing outgoing, accept this incoming
+                final existing = _peers.remove(resolvedId!)!;
+                _buffers.remove(resolvedId!);
+                existing.destroy(); // onDone fires but _peers[resolvedId] is already replaced
+                _peers[resolvedId!] = socket;
+                _buffers[resolvedId!] = buffer;
+                _reconnectAttempts.remove(resolvedId);
+                _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch;
+                _notifyChange();
+                _log('Simultaneous open: I yield (higher nodeId) — swapped to incoming from $resolvedId');
+              } else {
+                // I have lower nodeId → keep my outgoing, reject this incoming
+                _log('Simultaneous open: I keep outgoing (lower nodeId) — rejecting incoming from $resolvedId');
+                socket.destroy();
+                return;
+              }
             }
           }
 
@@ -325,8 +348,9 @@ class LanService {
         }
       },
       onDone: () {
-        // 이 소켓이 _peers에 등록된 소켓과 같을 때만 제거
-        // (중복 연결 감지로 파괴된 소켓의 onDone이 valid 피어를 지우는 race 방지)
+        // Only remove peer if this socket is still the registered one.
+        // Destroyed duplicate sockets also fire onDone; this check prevents
+        // them from removing the valid peer that replaced them.
         if (resolvedId != null && _peers[resolvedId] == socket) {
           _log('[DIAG-LAN] onDone → removePeer: $resolvedId');
           _removePeer(resolvedId!);
@@ -350,7 +374,9 @@ class LanService {
         socket.destroy();
         return;
       }
-      // 동시 오픈 레이스: incoming이 이미 등록됐으면 outgoing을 버린다.
+      // Simultaneous-open: if the incoming path already registered this peer,
+      // discard our outgoing. The tie-break in the incoming path ensures the
+      // correct socket survives.
       if (_peers.containsKey(knownNodeIdHex)) {
         _log('[DIAG-LAN] Outgoing duplicate discarded (incoming already registered): $knownNodeIdHex');
         socket.destroy();
@@ -358,8 +384,8 @@ class LanService {
       }
       _peers[knownNodeIdHex] = socket;
       _buffers[knownNodeIdHex] = buffer;
-      _reconnectAttempts.remove(knownNodeIdHex); // 연결 성공 → backoff 카운터 리셋
-      _lastPongMs[knownNodeIdHex] = DateTime.now().millisecondsSinceEpoch; // 초기 생존 시각
+      _reconnectAttempts.remove(knownNodeIdHex); // successful connect → reset backoff counter
+      _lastPongMs[knownNodeIdHex] = DateTime.now().millisecondsSinceEpoch;
       _notifyChange();
     }
   }
@@ -381,21 +407,32 @@ class LanService {
     _lastPongMs.remove(nodeIdHex);
     _notifyChange();
     if (!_running) return;
-    // 캐시에 주소가 있으면 exponential backoff 후 재연결
+    // Reconnect with exponential backoff after cached peer disconnects.
     final cached = _peerAddressCache[nodeIdHex];
     if (cached != null) {
       final attempt = _reconnectAttempts[nodeIdHex] ?? 0;
-      // 1s → 2s → 4s → 8s → 16s → 32s → 60s 상한
+      // 1s → 2s → 4s → 8s → 16s → 32s → 60s cap
       final delaySec = attempt < 6 ? (1 << attempt) : 60;
       _reconnectAttempts[nodeIdHex] = attempt + 1;
-      _log('Reconnect $nodeIdHex in ${delaySec}s (attempt ${attempt + 1})');
-      Future<void>.delayed(Duration(seconds: delaySec), () {
-        if (_running &&
-            !_peers.containsKey(nodeIdHex) &&
-            !_connecting.contains(nodeIdHex)) {
-          _connectToPeer(cached);
-        }
-      });
+      // Add node-ID-derived jitter (0–1999 ms) so that two nodes coming back
+      // from the same network disruption don't reconnect simultaneously and
+      // trigger the simultaneous-open race condition.
+      final jitterMs = _myNodeId != null
+          ? ((_myNodeId![_myNodeId!.length - 2] << 8 |
+                      _myNodeId![_myNodeId!.length - 1]) %
+                  2000)
+          : Random().nextInt(2000);
+      _log('Reconnect $nodeIdHex in ${delaySec}s + ${jitterMs}ms jitter (attempt ${attempt + 1})');
+      Future<void>.delayed(
+        Duration(milliseconds: delaySec * 1000 + jitterMs),
+        () {
+          if (_running &&
+              !_peers.containsKey(nodeIdHex) &&
+              !_connecting.contains(nodeIdHex)) {
+            _connectToPeer(cached);
+          }
+        },
+      );
     }
   }
 
