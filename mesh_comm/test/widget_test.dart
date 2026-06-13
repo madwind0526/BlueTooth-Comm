@@ -346,7 +346,7 @@ void main() {
     );
   });
 
-  test('virtual mesh enforces server relay-only and notice cooldowns', () {
+  test('virtual mesh enforces server relay-only and allows repeated notices', () {
     final self = _virtualSelf();
     final simulator = VirtualMeshSimulator.fromDemo(self: self);
     final relayB = simulator.nodes[virtualNodeId(0x12)]!;
@@ -377,8 +377,7 @@ void main() {
     expect(serverSend.accepted, isFalse);
     expect(serverSend.blockedReason, contains('Server'));
     expect(firstNotice.accepted, isTrue);
-    expect(secondNotice.accepted, isFalse);
-    expect(secondNotice.blockedReason, contains('cooldown'));
+    expect(secondNotice.accepted, isTrue);
   });
 }
 
