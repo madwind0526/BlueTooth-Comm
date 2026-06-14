@@ -4,18 +4,18 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
-/// 플랫폼별 파일 선택/저장 추상화.
+/// Platform-specific file open/save abstraction.
 ///
 /// Android : MethodChannel(com.meshcomm/file_selector)
-///   - 불러오기: ACTION_GET_CONTENT  → Samsung My Files (폴더 트리)
-///   - 저장하기: ACTION_CREATE_DOCUMENT → DocumentsUI 저장
-/// Windows : file_selector 패키지 (openFile / getSaveLocation)
+///   - Open: ACTION_GET_CONTENT  → Samsung My Files (folder tree)
+///   - Save: ACTION_CREATE_DOCUMENT → DocumentsUI save
+/// Windows : file_selector package (openFile / getSaveLocation)
 class PlatformFilePicker {
   static const _ch = MethodChannel('com.meshcomm/file_selector');
 
-  // ─── 불러오기 ────────────────────────────────────────────────────────────────
+  // ─── Open ─────────────────────────────────────────────────────────────────
 
-  /// 파일을 선택해 문자열로 반환. 취소 시 null.
+  /// Opens a file and returns it as a string. Returns null on cancel.
   static Future<String?> openFileAsString({
     required String initialDirectory,
     List<XTypeGroup> acceptedTypeGroups = const [],
@@ -41,7 +41,7 @@ class PlatformFilePicker {
     }
   }
 
-  /// 파일을 선택해 바이트로 반환. 취소 시 null.
+  /// Opens a file and returns it as bytes. Returns null on cancel.
   static Future<Uint8List?> openFileAsBytes({
     required String initialDirectory,
     String mimeType = '*/*',
@@ -60,9 +60,9 @@ class PlatformFilePicker {
     }
   }
 
-  // ─── 저장하기 ────────────────────────────────────────────────────────────────
+  // ─── Save ─────────────────────────────────────────────────────────────────
 
-  /// 파일 저장 다이얼로그 → 문자열 저장. 저장 경로/URI 반환. 취소 시 null.
+  /// Shows a save file dialog and writes a string. Returns the saved path/URI, or null on cancel.
   static Future<String?> saveFileAsString({
     required String content,
     required String suggestedName,
@@ -92,7 +92,7 @@ class PlatformFilePicker {
     }
   }
 
-  /// 파일 저장 다이얼로그 → 바이트 저장. 저장 경로/URI 반환. 취소 시 null.
+  /// Shows a save file dialog and writes bytes. Returns the saved path/URI, or null on cancel.
   static Future<String?> saveFileAsBytes({
     required Uint8List bytes,
     required String suggestedName,

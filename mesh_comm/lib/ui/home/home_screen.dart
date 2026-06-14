@@ -456,10 +456,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     : () {
                         FocusManager.instance.primaryFocus?.unfocus();
                         final name = groupName.trim();
-                        if (_chatGroups.any((g) => g.name == name)) {
-                          setDlg(() => errorMsg = '그룹명이 있습니다');
-                          return;
-                        }
                         result = (
                           name: name,
                           invitees: contacts.where((c) {
@@ -720,6 +716,15 @@ class _HomeScreenState extends State<HomeScreen> {
     Future<void>.delayed(const Duration(seconds: 10), () {
       if (mounted) setState(() => _isScanning = false);
     });
+    // Restart LAN after BLE scan: scan can reset WiFi stack causing 0 peers.
+    // Stop → 500ms delay → start reconnects dropped TCP sessions automatically.
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 1500), () async {
+        await MessagingService().stopLan();
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        await MessagingService().startLan();
+      }),
+    );
   }
 
   void _syncDemoTopology(bool enabled) {

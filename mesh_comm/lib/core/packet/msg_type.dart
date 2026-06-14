@@ -1,26 +1,26 @@
 // lib/core/packet/msg_type.dart
 
-/// MeshPacket 메시지 유형 열거형.
+/// MeshPacket message type enum.
 ///
-/// 1 byte (0x01 ~ 0x06) 로 직렬화된다.
-/// 알 수 없는 값은 [MsgType.fromValue]가 FormatException을 던진다.
+/// Serialized as 1 byte (0x01 ~ 0x06).
+/// [MsgType.fromValue] throws FormatException for unknown values.
 enum MsgType {
-  /// 일반 텍스트 메시지 (E2E 암호화 payload)
+  /// Plain text message (E2E encrypted payload)
   text(0x01),
 
-  /// 공개키 브로드캐스트 공지 (앱 시작 + 5분 주기 재전송, 서명 필수)
+  /// Public key broadcast announcement (on app start + re-sent every 5 minutes, signature required)
   keyAnnounce(0x02),
 
-  /// 관리자 서명 공지 (Phase 3)
+  /// Admin-signed notice (Phase 3)
   adminNotice(0x03),
 
-  /// 수신 확인 (Phase 2 구현 예정)
+  /// Delivery acknowledgment (Phase 2, planned)
   ack(0x04),
 
-  /// Heartbeat 요청 (30초 주기)
+  /// Heartbeat request (every 30 seconds)
   ping(0x05),
 
-  /// Heartbeat 응답
+  /// Heartbeat response
   pong(0x06),
 
   /// SCAN topology request. Receivers respond with their 1-hop view.
@@ -29,39 +29,42 @@ enum MsgType {
   /// SCAN topology response containing one node's direct neighbor summary.
   topologyResponse(0x08),
 
-  /// 파일/이미지 전송 시작 메타데이터 (이름·크기·청크 수·전송 ID).
+  /// File/image transfer start metadata (name, size, chunk count, transfer ID).
   fileHeader(0x09),
 
-  /// 파일/이미지 청크 데이터 (전송 ID + 청크 인덱스 + 바이너리).
+  /// File/image chunk data (transfer ID + chunk index + binary).
   fileChunk(0x0A),
 
-  /// 파일/이미지 청크 수신 확인 (전송 ID + 청크 인덱스 + 성공 여부).
+  /// File/image chunk acknowledgment (transfer ID + chunk index + success flag).
   fileAck(0x0B),
 
-  /// 파일 전송 취소 (전송 ID). 송신·수신 양쪽 모두 보낼 수 있다.
+  /// File transfer cancellation (transfer ID). Can be sent by either sender or receiver.
   fileCancel(0x0C),
 
-  /// 그룹 채팅 초대 (inviter → target)
+  /// Group chat invitation (inviter → target)
   groupInvite(0x0D),
 
-  /// 그룹 초대 응답 (target → inviter): accept/reject
+  /// Group invitation response (target → inviter): accept/reject
   groupInviteResp(0x0E),
 
-  /// 그룹 메시지 (sender → each member individually)
+  /// Group message (sender → each member individually)
   groupMessage(0x0F),
 
-  /// 그룹 멤버 변경 공지 (leader → all members): add/remove/leader_change
+  /// Group member change announcement (leader → all members): add/remove/leader_change
   groupMemberUpdate(0x10),
 
-  /// 그룹 나가기 (member → all members)
-  groupLeave(0x11);
+  /// Leave group (member → all members)
+  groupLeave(0x11),
+
+  /// File receipt confirmation (receiver → original sender): tid + groupId
+  fileReceipt(0x12);
 
   final int value;
   const MsgType(this.value);
 
-  /// [v]에 해당하는 [MsgType]을 반환한다.
+  /// Returns the [MsgType] for value [v].
   ///
-  /// 정의되지 않은 값이면 [FormatException]을 던진다.
+  /// Throws [FormatException] for undefined values.
   static MsgType fromValue(int v) {
     for (final type in MsgType.values) {
       if (type.value == v) return type;

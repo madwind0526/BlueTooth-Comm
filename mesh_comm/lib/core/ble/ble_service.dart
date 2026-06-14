@@ -12,15 +12,15 @@ import '../diagnostics/diagnostic_config.dart';
 import 'ble_constants.dart';
 import 'ble_fragment_codec.dart';
 
-/// BLE 스캔 결과 데이터 클래스.
+/// Data class for BLE scan results.
 class BleScanResult {
-  /// 발견된 기기의 BLE 주소 (device ID).
+  /// BLE address (device ID) of the discovered device.
   final String deviceId;
 
-  /// ScanResponse에서 파싱한 node_id (없으면 null).
+  /// node_id parsed from ScanResponse (null if absent).
   final Uint8List? nodeId;
 
-  /// 수신 신호 강도 (dBm).
+  /// Received signal strength (dBm).
   final int rssi;
 
   const BleScanResult({
@@ -30,13 +30,13 @@ class BleScanResult {
   });
 }
 
-/// BLE 메시 네트워크 서비스 (싱글톤).
+/// BLE mesh network service (singleton).
 ///
-/// ## 역할
-/// - **Android**: Peripheral(광고·연결 수락) + Central(스캔·연결 요청) 동시 운용
-/// - **Windows**: Central 전용 (flutter_blue_plus 가 Windows Peripheral 미지원)
+/// ## Roles
+/// - **Android**: Peripheral (advertising + accepting connections) + Central (scanning + requesting connections)
+/// - **Windows**: Central only (flutter_blue_plus does not support Windows Peripheral)
 ///
-/// ## 사용 흐름
+/// ## Usage flow
 /// ```dart
 /// await BleService().init(
 ///   myNodeId: nodeId,
@@ -45,55 +45,55 @@ class BleScanResult {
 /// await BleService().startScan();
 /// ```
 class BleService {
-  // ── 싱글톤 ───────────────────────────────────────────────────
+  // ── Singleton ───────────────────────────────────────────────────────────────
   static final BleService _instance = BleService._internal();
   factory BleService() => _instance;
   BleService._internal();
 
-  // ── 초기화 상태 ──────────────────────────────────────────────
+  // ── Initialization state ─────────────────────────────────────────────────────
   bool _initialized = false;
   Uint8List? _myNodeId;
   void Function(MeshPacket packet, String deviceId)? _onPacketReceived;
 
-  // ── 연결 관리 ────────────────────────────────────────────────
-  /// deviceId → BluetoothDevice 매핑
+  // ── Connection management ─────────────────────────────────────────────────────
+  /// deviceId → BluetoothDevice mapping
   final Map<String, BluetoothDevice> _connectedDevices = {};
 
-  /// deviceId → 연결 상태 구독 취소
+  /// deviceId → connection state subscription cancellation
   final Map<String, StreamSubscription> _connectionSubscriptions = {};
 
-  /// deviceId → 발견한 메시지 characteristic 캐시.
+  /// deviceId → cached message characteristic found during discovery.
   final Map<String, BluetoothCharacteristic> _messageCharacteristics = {};
 
-  /// deviceId → notify 구독 취소.
+  /// deviceId → notify subscription cancellation.
   final Map<String, StreamSubscription> _notificationSubscriptions = {};
 
-  /// device별 BLE 전송을 순서대로 처리하여 notify/write가 겹치지 않게 한다.
+  /// Processes BLE sends per device in order so notify/write do not overlap.
   final Map<String, Future<void>> _sendQueues = {};
   final Map<String, DateTime> _lastSendFailureAt = {};
   final Map<String, int> _sendFailureCounts = {};
 
-  /// 연결 협상 중인 device ID. 반복 scan result로 인한 중복 연결을 막는다.
+  /// Device IDs currently being connected. Prevents duplicate connections from repeated scan results.
   final Set<String> _connectingDevices = {};
 
-  /// Android Peripheral GATT 서버에 연결된 Central device ID.
+  /// Central device IDs connected to the Android Peripheral GATT server.
   final Set<String> _peripheralConnectedDevices = {};
 
-  /// Android peripheral 연결별 협상 MTU.
+  /// Negotiated MTU per Android peripheral connection.
   final Map<String, int> _peripheralMtuByDevice = {};
 
   final BleFragmentReassembler _fragmentReassembler = BleFragmentReassembler();
 
   bool _peripheralInitialized = false;
 
-  // ── Stream 컨트롤러 ──────────────────────────────────────────
+  // ── Stream controllers ───────────────────────────────────────────────────────
   final StreamController<List<String>> _connectedDevicesController =
       StreamController<List<String>>.broadcast();
 
   final StreamController<BleScanResult> _scanResultController =
       StreamController<BleScanResult>.broadcast();
 
-  // ── 스캔 구독 ────────────────────────────────────────────────
+  // ── Scan subscriptions ───────────────────────────────────────────────────────
   StreamSubscription? _scanSubscription;
   Timer? _scanTimer;
   Timer? _rescanTimer;
@@ -103,27 +103,27 @@ class BleService {
   // ── Heartbeat ────────────────────────────────────────────────
   Timer? _heartbeatTimer;
 
-  /// deviceId → 연속 무응답 횟수
+  /// deviceId → consecutive missed heartbeat count
   final Map<String, int> _heartbeatMissed = {};
   bool _heartbeatInProgress = false;
 
-  // ── 공개 Stream ──────────────────────────────────────────────
+  // ── Public streams ────────────────────────────────────────────────────────────
 
-  /// 연결된 기기 ID 목록 변화 스트림.
+  /// Stream of changes to the connected device ID list.
   Stream<List<String>> get connectedDevicesStream =>
       _connectedDevicesController.stream;
 
-  /// 스캔으로 발견된 기기 스트림.
+  /// Stream of devices discovered by scanning.
   Stream<BleScanResult> get scanResultStream => _scanResultController.stream;
 
-  // ── 초기화 ───────────────────────────────────────────────────
+  // ── Initialization ────────────────────────────────────────────────────────────
 
-  /// BleService를 초기화한다.
+  /// Initializes BleService.
   ///
-  /// [myNodeId]: 광고 패킷에 포함될 16 bytes node_id.
-  /// [onPacketReceived]: 패킷 수신 콜백. 발신 기기 ID와 함께 전달.
+  /// [myNodeId]: 16-byte node_id to include in advertisement packets.
+  /// [onPacketReceived]: callback invoked on packet receipt, along with the sender device ID.
   ///
-  /// 멱등(idempotent): 이미 초기화된 경우 즉시 반환.
+  /// Idempotent: returns immediately if already initialized.
   Future<void> init({
     required Uint8List myNodeId,
     required void Function(MeshPacket packet, String deviceId) onPacketReceived,
@@ -137,12 +137,12 @@ class BleService {
     _log('BleService initialized. platform=${Platform.operatingSystem}');
   }
 
-  // ── Peripheral (Android 전용) ────────────────────────────────
+  // ── Peripheral (Android only) ────────────────────────────────────────────────
 
-  /// BLE 광고를 시작한다. **Android 전용**.
+  /// Starts BLE advertising. **Android only**.
   ///
-  /// 광고 패킷에 [serviceUuid]를 포함하며,
-  /// manufacturer data에 [_myNodeId]를 포함한다.
+  /// Includes [serviceUuid] in the advertisement packet and
+  /// [_myNodeId] in the manufacturer data.
   Future<void> startAdvertising() async {
     if (!Platform.isAndroid) return;
     if (_myNodeId == null) {
@@ -169,7 +169,7 @@ class BleService {
     }
   }
 
-  /// BLE 광고를 중지한다. **Android 전용**.
+  /// Stops BLE advertising. **Android only**.
   Future<void> stopAdvertising() async {
     if (!Platform.isAndroid) return;
     try {
@@ -180,15 +180,15 @@ class BleService {
     }
   }
 
-  // ── Central 스캔 ─────────────────────────────────────────────
+  // ── Central scan ─────────────────────────────────────────────────────────────
 
-  /// BLE 스캔을 시작한다.
+  /// Starts BLE scanning.
   ///
-  /// [serviceUuid] 필터로 메시 앱 기기만 발견한다.
-  /// 발견된 기기는 [connectedDeviceIds]가 [maxConnections] 미만인 경우
-  /// 자동으로 연결을 시도한다.
+  /// Discovers only mesh app devices via the [serviceUuid] filter.
+  /// Automatically attempts to connect to discovered devices when
+  /// [connectedDeviceIds] is below [maxConnections].
   ///
-  /// [scanDuration] 후 자동 중단된다.
+  /// Automatically stops after [scanDuration].
   Future<void> startScan() async {
     _scanRequested = true;
     if (_scanStarting) return;
@@ -196,25 +196,25 @@ class BleService {
     _rescanTimer = null;
     _scanStarting = true;
     try {
-      // 이전 스캔 정리
+      // Clean up the previous scan
       await stopScan(keepAutoRestart: true);
       if (!_scanRequested) return;
 
-      // BLE 어댑터 상태 확인
+      // Check BLE adapter state
       final adapterState = await FlutterBluePlus.adapterState.first;
       if (!_scanRequested) return;
       if (adapterState != BluetoothAdapterState.on) {
-        _log('BLE 어댑터 꺼져 있음: $adapterState — 스캔 중단');
+        _log('BLE adapter is off: $adapterState — scan aborted');
         return;
       }
 
-      // Windows: systemDevices로 이미 알려진 BLE 기기 먼저 확인
+      // Windows: check already-known BLE devices first via systemDevices
       if (Platform.isWindows) {
         try {
           final knownDevices = await FlutterBluePlus.systemDevices([]);
-          _log('Windows 알려진 기기: ${knownDevices.length}개');
+          _log('Windows known devices: ${knownDevices.length}');
           for (final d in knownDevices) {
-            _log('  알려진 기기: ${d.remoteId.str} name=${d.platformName}');
+            _log('  known device: ${d.remoteId.str} name=${d.platformName}');
             // Log only. Actual connections are made from MeshComm-filtered
             // scan results so unrelated paired BLE devices are ignored.
           }
@@ -223,7 +223,7 @@ class BleService {
         }
       }
 
-      // onScanResults 사용 (Windows winrt에서 더 안정적)
+      // Use onScanResults (more stable on Windows WinRT)
       if (!_scanRequested) return;
       _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
         for (final result in results) {
@@ -231,9 +231,9 @@ class BleService {
         }
       }, onError: (e) => _log('scanResults error: $e'));
 
-      // Windows: withServices 필터가 WinRT BLE 광고 형식에 따라 동작하지 않을 수
-      // 있음 → 필터 없이 전체 스캔 후 _handleScanResult에서 MeshComm 기기 식별.
-      // Android: serviceUuid 필터로 MeshComm 기기만 빠르게 발견.
+      // Windows: withServices filter may not work depending on WinRT BLE ad format
+      // → scan without filter, then identify MeshComm devices in _handleScanResult.
+      // Android: use serviceUuid filter to quickly discover only MeshComm devices.
       await FlutterBluePlus.startScan(
         timeout: BleConstants.scanDuration,
         withServices: Platform.isWindows ? [] : [Guid(BleConstants.serviceUuid)],
@@ -244,12 +244,12 @@ class BleService {
         return;
       }
 
-      // 타임아웃 후 자동 재스캔 (연결 유지를 위해 주기적으로 반복)
+      // Auto-rescan after timeout (repeats periodically to maintain connections)
       _scanTimer = Timer(BleConstants.scanDuration, () {
         _scanSubscription?.cancel();
         _scanSubscription = null;
-        _log('Scan completed — 15초 후 재스캔');
-        // 15초 후 재스캔 (연결된 기기가 maxConnections 미만이면)
+        _log('Scan completed — rescan in 15s');
+        // Rescan in 15s if connected devices are below maxConnections
         if (!_scanRequested) return;
         final shouldRescan =
             connectedDeviceIds.length < BleConstants.maxConnections;
@@ -273,7 +273,7 @@ class BleService {
     }
   }
 
-  /// 진행 중인 스캔을 중지한다.
+  /// Stops the current scan in progress.
   Future<void> stopScan({bool keepAutoRestart = false}) async {
     if (!keepAutoRestart) {
       _scanRequested = false;
@@ -292,11 +292,11 @@ class BleService {
     }
   }
 
-  // ── 패킷 전송 ────────────────────────────────────────────────
+  // ── Packet sending ────────────────────────────────────────────────────────────
 
-  /// 특정 기기에 [packet]을 전송한다.
+  /// Sends [packet] to a specific device.
   ///
-  /// 반환값: 전송 성공 여부.
+  /// Returns: whether the send succeeded.
   Future<bool> sendPacket(MeshPacket packet, String deviceId) async {
     final previous = _sendQueues[deviceId] ?? Future.value();
     var success = false;
@@ -408,9 +408,9 @@ class BleService {
     }
   }
 
-  /// 연결된 모든 기기에 [packet]을 전송한다 (Flooding).
+  /// Sends [packet] to all connected devices (Flooding).
   ///
-  /// [excludeDeviceId]: 이 기기에는 전송하지 않는다 (Reverse Path Filtering, R-09).
+  /// [excludeDeviceId]: skips this device (Reverse Path Filtering, R-09).
   Future<int> broadcastPacket(
     MeshPacket packet, {
     String? excludeDeviceId,
@@ -426,25 +426,25 @@ class BleService {
     return results.where((sent) => sent).length;
   }
 
-  // ── 연결 관리 ────────────────────────────────────────────────
+  // ── Connection management ─────────────────────────────────────────────────────
 
-  /// 현재 연결된 기기 ID 목록.
+  /// List of currently connected device IDs.
   List<String> get connectedDeviceIds => List.unmodifiable({
     ..._connectedDevices.keys,
     ..._peripheralConnectedDevices,
   });
 
-  /// [deviceId] 기기가 현재 연결 중인지 확인한다.
+  /// Returns whether [deviceId] is currently connected.
   bool isConnected(String deviceId) =>
       _connectedDevices.containsKey(deviceId) ||
       _peripheralConnectedDevices.contains(deviceId);
 
-  /// [deviceId] 기기와의 연결을 끊는다.
+  /// Disconnects from [deviceId].
   Future<void> disconnect(String deviceId) async {
     final device = _connectedDevices[deviceId];
     if (device == null) {
-      // ble_peripheral은 Android GATT server 연결을 강제로 끊는 API를
-      // 제공하지 않는다. heartbeat 관점에서만 이웃을 제거한다.
+      // ble_peripheral does not provide an API to forcibly disconnect an
+      // Android GATT server connection. Remove the neighbor only from the heartbeat perspective.
       if (_peripheralConnectedDevices.remove(deviceId)) {
         _heartbeatMissed.remove(deviceId);
         _peripheralMtuByDevice.remove(deviceId);
@@ -462,17 +462,17 @@ class BleService {
     } catch (e) {
       _log('disconnect error ($deviceId): $e');
     }
-    // 실제 제거는 connectionState 리스너에서 처리됨
+    // Actual removal is handled in the connectionState listener
   }
 
-  // ── 내부 헬퍼 ────────────────────────────────────────────────
+  // ── Internal helpers ──────────────────────────────────────────────────────────
 
-  /// 스캔 결과를 처리하고 필요 시 연결을 시도한다.
+  /// Processes a scan result and attempts connection if needed.
   void _handleScanResult(ScanResult result) {
     final deviceId = result.device.remoteId.str;
     final rssi = result.rssi;
 
-    // node_id 파싱: manufacturerData에서 추출
+    // Parse node_id: extract from manufacturerData
     Uint8List? nodeId;
     try {
       final mData = result.advertisementData.manufacturerData;
@@ -483,10 +483,10 @@ class BleService {
         }
       }
     } catch (_) {
-      // 파싱 실패 시 nodeId = null
+      // nodeId = null on parse failure
     }
 
-    // MeshComm 기기 확인: serviceUuid 또는 localName으로 식별
+    // Identify MeshComm devices: by serviceUuid or localName
     final serviceUuids = result.advertisementData.serviceUuids
         .map((g) => g.str128.toLowerCase())
         .toList();
@@ -504,24 +504,24 @@ class BleService {
     }
 
     if (!hasMeshService && !hasMeshName && !hasMeshNodeId) {
-      return; // MeshComm 앱이 아닌 기기 무시
+      return; // Ignore non-MeshComm devices
     }
-    _log('MeshComm 기기 발견: $deviceId (rssi: $rssi, name: $localName)');
+    _log('MeshComm device found: $deviceId (rssi: $rssi, name: $localName)');
 
-    // 이미 연결된 기기는 건너뜀
+    // Skip already connected devices
     if (_connectedDevices.containsKey(deviceId) ||
         _connectingDevices.contains(deviceId)) {
       return;
     }
 
-    // 최대 연결 수 초과 시 연결 시도 중단
+    // Stop connection attempt when max connections reached
     if (connectedDeviceIds.length >= BleConstants.maxConnections) return;
 
-    // 백그라운드에서 연결 시도 (오류 시 로그만 출력)
+    // Attempt connection in background (only log on error)
     _connectToDevice(result.device);
   }
 
-  /// [device]에 연결하고 GATT 서비스를 설정한다.
+  /// Connects to [device] and sets up GATT services.
   Future<void> _connectToDevice(BluetoothDevice device) async {
     final deviceId = device.remoteId.str;
     if (_connectedDevices.containsKey(deviceId) ||
@@ -531,7 +531,7 @@ class BleService {
     _log('Connecting to $deviceId ...');
 
     try {
-      // Windows BLE 스택은 connect/discoverServices 가 수초 걸릴 수 있어 타임아웃 필수.
+      // Windows BLE stack may take several seconds for connect/discoverServices, so timeout is required.
       await device
           .connect(license: License.nonprofit, autoConnect: false)
           .timeout(
@@ -542,7 +542,7 @@ class BleService {
         },
       );
 
-      // MTU 협상 (Android 전용, Windows는 자동)
+      // MTU negotiation (Android only; Windows handles it automatically)
       if (Platform.isAndroid) {
         try {
           await device.requestMtu(BleConstants.requestedMtu);
@@ -551,7 +551,7 @@ class BleService {
         }
       }
 
-      // 서비스 발견
+      // Service discovery
       final services = await device.discoverServices().timeout(
         const Duration(seconds: 12),
         onTimeout: () {
@@ -570,7 +570,7 @@ class BleService {
         return;
       }
 
-      // Characteristic 찾기 및 notify 구독
+      // Find Characteristic and subscribe to notify
       final messageChar = targetService.characteristics
           .cast<BluetoothCharacteristic?>()
           .firstWhere(
@@ -584,7 +584,7 @@ class BleService {
         return;
       }
 
-      // Notify 구독
+      // Subscribe to notify
       await messageChar.setNotifyValue(true).timeout(
         const Duration(seconds: 8),
         onTimeout: () {
@@ -601,12 +601,12 @@ class BleService {
         onError: (e) => _log('notify error ($deviceId): $e'),
       );
 
-      // 연결 등록
+      // Register connection
       _connectedDevices[deviceId] = device;
       _heartbeatMissed[deviceId] = 0;
       _notifyConnectionChange();
 
-      // 연결 끊김 감지
+      // Detect disconnection
       final sub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
           _onDeviceDisconnected(deviceId);
@@ -617,21 +617,21 @@ class BleService {
       _log('Connected to $deviceId');
     } catch (e) {
       _log('_connectToDevice error ($deviceId): $e');
-      // GATT 슬롯 반환 — catch 시 disconnect하지 않으면 OS 슬롯이 점유 상태로 남음
+      // Return GATT slot — if disconnect is not called on catch, the OS slot remains occupied
       try { await device.disconnect(); } catch (_) {}
     } finally {
       _connectingDevices.remove(deviceId);
     }
   }
 
-  /// BLE 조각을 합친 뒤 [MeshPacket]으로 파싱하고 콜백을 호출한다.
+  /// Reassembles BLE fragments, parses them as a [MeshPacket], and invokes the callback.
   void _handleIncomingBytes(Uint8List bytes, String deviceId) {
     Uint8List? packetBytes;
     if (BleFragmentCodec.isFragment(bytes)) {
       packetBytes = _fragmentReassembler.add(deviceId, bytes);
       if (packetBytes == null) return;
     } else {
-      // 프로토콜 전환 중 raw packet도 파싱하여 오류를 명확히 기록한다.
+      // Also parse raw packets during protocol transition to clearly log errors.
       packetBytes = bytes;
     }
 
@@ -646,7 +646,7 @@ class BleService {
     _onPacketReceived?.call(packet, deviceId);
   }
 
-  /// 기기 연결 끊김을 처리한다.
+  /// Handles device disconnection.
   void _onDeviceDisconnected(String deviceId) {
     _log('Device disconnected: $deviceId');
     _connectedDevices.remove(deviceId);
@@ -671,7 +671,7 @@ class BleService {
     }
   }
 
-  /// Android Peripheral GATT 서버와 메시지 characteristic을 등록한다.
+  /// Registers the Android Peripheral GATT server and message characteristic.
   Future<void> _initializePeripheral() async {
     if (_peripheralInitialized) return;
 
@@ -766,13 +766,13 @@ class BleService {
     _log('Peripheral GATT server initialized');
   }
 
-  /// 연결된 기기의 messageChar을 찾아 반환한다.
-  /// 캐시(_messageCharacteristics)가 있으면 GATT 재탐색 없이 바로 반환.
+  /// Finds and returns the messageChar for the connected device.
+  /// Returns from cache (_messageCharacteristics) immediately without re-discovering GATT.
   Future<BluetoothCharacteristic?> _findMessageCharacteristic(
     BluetoothDevice device,
   ) async {
     final deviceId = device.remoteId.str;
-    // 캐시 우선 반환 — 중복 discoverServices 호출 방지
+    // Return from cache first — prevents duplicate discoverServices calls
     final cached = _messageCharacteristics[deviceId];
     if (cached != null) return cached;
 
@@ -799,7 +799,7 @@ class BleService {
     return null;
   }
 
-  /// connectedDevicesStream에 최신 목록을 emit한다.
+  /// Emits the latest device list to connectedDevicesStream.
   void _notifyConnectionChange() {
     if (!_connectedDevicesController.isClosed) {
       _connectedDevicesController.add(connectedDeviceIds);
@@ -808,10 +808,10 @@ class BleService {
 
   // ── Heartbeat ────────────────────────────────────────────────
 
-  /// Heartbeat 타이머를 시작한다.
+  /// Starts the heartbeat timer.
   ///
-  /// [BleConstants.heartbeatInterval] 마다 PING을 전송하고,
-  /// [BleConstants.heartbeatMaxMissed] 회 연속 무응답 시 해당 기기를 제거한다.
+  /// Sends a PING every [BleConstants.heartbeatInterval] and removes a device
+  /// after [BleConstants.heartbeatMaxMissed] consecutive missed responses.
   void startHeartbeat(Future<MeshPacket> Function() pingPacketFactory) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(BleConstants.heartbeatInterval, (_) async {
@@ -820,7 +820,7 @@ class BleService {
       try {
         final deviceIds = connectedDeviceIds;
         for (final deviceId in deviceIds) {
-          // 무응답 횟수 증가 후 전송
+          // Increment missed count, then send
           _heartbeatMissed[deviceId] = (_heartbeatMissed[deviceId] ?? 0) + 1;
 
           if (_heartbeatMissed[deviceId]! > BleConstants.heartbeatMaxMissed) {
@@ -838,22 +838,22 @@ class BleService {
     });
   }
 
-  /// Heartbeat 타이머를 중지한다.
+  /// Stops the heartbeat timer.
   void stopHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
   }
 
-  /// 서명이 검증된 PONG을 수신했을 때 heartbeat 카운터를 초기화한다.
+  /// Resets the heartbeat counter when a signature-verified PONG is received.
   void markHeartbeatResponse(String deviceId) {
     if (isConnected(deviceId)) {
       _heartbeatMissed[deviceId] = 0;
     }
   }
 
-  // ── 정리 ────────────────────────────────────────────────────
+  // ── Cleanup ──────────────────────────────────────────────────
 
-  /// 모든 연결을 끊고 리소스를 해제한다.
+  /// Disconnects all connections and releases resources.
   Future<void> dispose() async {
     stopHeartbeat();
     await stopScan();
@@ -902,7 +902,7 @@ class BleService {
     _log('BleService disposed');
   }
 
-  // ── 로그 ────────────────────────────────────────────────────
+  // ── Logging ──────────────────────────────────────────────────
 
   void _log(String message) {
     // ignore: avoid_print

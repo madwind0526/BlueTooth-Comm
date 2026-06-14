@@ -41,6 +41,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   static const Color _textPrimary = Color(0xFFECECEC);
   static const Color _textSecondary = Color(0xFF9090A0);
 
+  // Receipt window: ignore receipts arriving more than 5 minutes after send.
+  static const _receiptWindowMs = 5 * 60 * 1000;
+
   static const _dropdownItems = [
     ('일반', 'normal'),
     ('타임', 'timed'),
@@ -57,14 +60,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final _keyboardFocusNode = FocusNode();
   final _scrollController = ScrollController();
   StreamSubscription<GroupMessage>? _msgSubscription;
+  StreamSubscription<String>? _receiptSubscription;
   StreamSubscription<ChatGroup>? _updateSubscription;
   StreamSubscription<dynamic>? _transferSubscription;
   StreamSubscription<String>? _kickedSubscription;
   final Map<String, ({TransferMeta meta, double progress, TransferDirection direction})>
       _activeTransfers = {};
-  // 완료된 파일: fileName → 절대 경로 (sent/ 또는 received/ 에 저장된 파일)
+  // Saved files: fileName → absolute path
   final Map<String, String> _filePaths = {};
   final Map<String, TransferKind> _fileKinds = {};
+  // Filenames whose incoming transfer failed this session
+  final Set<String> _failedFileNames = {};
+  // Outgoing delivery tracking: fileName → (received, total)
+  final Map<String, ({int received, int total})> _deliveryStatus = {};
+  // Outgoing tid → fileName for receipt matching
+  final Map<String, String> _outgoingTidToFileName = {};
+  // Receipt deadline: tid → expiry timestamp ms
+  final Map<String, int> _receiptExpiry = {};
   MessageSendMode _messageMode = MessageSendMode.normal;
   bool _isSending = false;
   Timer? _historyRefreshTimer;
@@ -90,7 +102,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _kickedSubscription = _groupMessaging.kickedFromGroupStream
         .where((gid) => gid == _group.groupId)
         .listen((_) => _onKicked());
-    // 화면 복원: 진행 중인 그룹 멤버 관련 전송만 복원
+    // Restore in-progress transfers for group members only.
     final memberHexes = _group.members.map((m) => m.nodeIdHex).toSet();
     for (final s in TransferService().activeTransferSnapshots) {
       if (!memberHexes.contains(s.contactNodeIdHex)) continue;
@@ -100,14 +112,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     _transferSubscription = MessagingService().transferStream.listen((event) async {
       if (!mounted) return;
-      // 그룹 멤버 관련 전송만 처리 (1:1 채팅 오염 방지)
+      // Only process transfers involving group members (avoid 1:1 chat pollution).
       final isGroupTransfer = _activeTransfers.containsKey(event.tid) ||
           (event is TransferStarted &&
               memberHexes.contains(event.contactNodeIdHex));
       if (!isGroupTransfer) return;
 
       if (event is TransferCompleted) {
-        // 비동기 파일 저장 후 setState
         if (!mounted) return;
         setState(() => _activeTransfers.remove(event.tid));
         try {
@@ -121,8 +132,19 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             _filePaths[event.meta.fileName] = path;
             _fileKinds[event.meta.fileName] = event.meta.kind;
           });
+          // Notify the sender that we received the file.
+          if (event.direction == TransferDirection.incoming) {
+            final gid = event.meta.groupId;
+            if (gid != null) {
+              await _groupMessaging.sendFileReceipt(
+                tid: event.tid,
+                groupId: gid,
+                toNodeIdHex: event.contactNodeIdHex,
+              );
+            }
+          }
         } catch (e) {
-          debugPrint('[GroupChat] 파일 저장 실패: $e');
+          debugPrint('[GroupChat] file save failed: $e');
         }
         return;
       }
@@ -139,8 +161,35 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   (meta: prev.meta, progress: event.progress, direction: prev.direction);
             }
           case TransferCompleted():
+            _activeTransfers.remove(event.tid);
           case TransferFailed():
             _activeTransfers.remove(event.tid);
+            if (event.direction == TransferDirection.incoming) {
+              final fn = event.meta?.fileName;
+              if (fn != null) _failedFileNames.add(fn);
+            }
+        }
+      });
+    });
+
+    // Receipt stream: incoming tid means a recipient confirmed file delivery.
+    _receiptSubscription = _groupMessaging.fileReceiptStream.listen((tid) {
+      if (!mounted) return;
+      final expiry = _receiptExpiry[tid];
+      if (expiry != null && DateTime.now().millisecondsSinceEpoch > expiry) {
+        debugPrint('[GroupChat] receipt EXPIRED: tid=${tid.substring(0, 8)}');
+        return;
+      }
+      final fileName = _outgoingTidToFileName[tid];
+      if (fileName == null) {
+        debugPrint('[GroupChat] receipt UNKNOWN TID: tid=${tid.substring(0, 8)} map=${_outgoingTidToFileName.length}');
+        return;
+      }
+      debugPrint('[GroupChat] receipt OK: tid=${tid.substring(0, 8)} -> $fileName');
+      setState(() {
+        final prev = _deliveryStatus[fileName];
+        if (prev != null && prev.received < prev.total) {
+          _deliveryStatus[fileName] = (received: prev.received + 1, total: prev.total);
         }
       });
     });
@@ -171,6 +220,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _updateSubscription?.cancel();
     _transferSubscription?.cancel();
     _kickedSubscription?.cancel();
+    _receiptSubscription?.cancel();
     _historyRefreshTimer?.cancel();
     _controller.dispose();
     _keyboardFocusNode.dispose();
@@ -250,7 +300,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile();
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    // 발신자: 그룹 채팅 인라인 폴더에 저장 후 UI 반영
+    // Save locally so the sender sees the file immediately in chat.
     try {
       final dir = await TransferStorageService.groupChatDir(groupName: _group.name);
       final path = p.join(dir.path, file.name);
@@ -261,10 +311,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _fileKinds[file.name] = TransferKind.file;
       });
     } catch (_) {}
+    var sendCount = 0;
+    final expiry = DateTime.now().millisecondsSinceEpoch + _receiptWindowMs;
     for (final member in _group.members) {
       if (_isMe(member.nodeId)) continue;
       if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
-      await MessagingService().sendFile(
+      final tid = await MessagingService().sendFile(
         data: data,
         fileName: file.name,
         mimeType: 'application/octet-stream',
@@ -272,6 +324,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         kind: TransferKind.file,
         groupId: _group.groupId,
       );
+      if (tid != null) {
+        debugPrint('[GroupChat] sendFile tid=${tid.substring(0, 8)} -> ${file.name} to ${member.nodeIdHex.substring(0, 8)}');
+        _outgoingTidToFileName[tid] = file.name;
+        _receiptExpiry[tid] = expiry;
+        sendCount++;
+      }
+    }
+    if (sendCount > 0) {
+      debugPrint('[GroupChat] deliveryStatus: ${file.name} total=$sendCount');
+      setState(() => _deliveryStatus[file.name] = (received: 0, total: sendCount));
     }
     await _groupMessaging.sendGroupMessage(
       group: _group,
@@ -292,7 +354,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final file = await openFile(acceptedTypeGroups: [imageTypes]);
     if (file == null || !mounted) return;
     final data = Uint8List.fromList(await file.readAsBytes());
-    // 발신자: 그룹 채팅 인라인 폴더에 저장 후 UI 반영
     try {
       final dir = await TransferStorageService.groupChatDir(groupName: _group.name);
       final path = p.join(dir.path, file.name);
@@ -303,10 +364,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _fileKinds[file.name] = TransferKind.image;
       });
     } catch (_) {}
+    var sendCount = 0;
+    final expiry = DateTime.now().millisecondsSinceEpoch + _receiptWindowMs;
     for (final member in _group.members) {
       if (_isMe(member.nodeId)) continue;
       if (!MessagingService().isDirectlyConnected(member.nodeIdHex)) continue;
-      await MessagingService().sendFile(
+      final tid = await MessagingService().sendFile(
         data: data,
         fileName: file.name,
         mimeType: 'image/jpeg',
@@ -314,6 +377,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         kind: TransferKind.image,
         groupId: _group.groupId,
       );
+      if (tid != null) {
+        debugPrint('[GroupChat] sendImage tid=${tid.substring(0, 8)} -> ${file.name} to ${member.nodeIdHex.substring(0, 8)}');
+        _outgoingTidToFileName[tid] = file.name;
+        _receiptExpiry[tid] = expiry;
+        sendCount++;
+      }
+    }
+    if (sendCount > 0) {
+      debugPrint('[GroupChat] deliveryStatus: ${file.name} total=$sendCount');
+      setState(() => _deliveryStatus[file.name] = (received: 0, total: sendCount));
     }
     await _groupMessaging.sendGroupMessage(
       group: _group,
@@ -724,10 +797,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             : msg.text;
 
     final time = DateTime.fromMillisecondsSinceEpoch(msg.timestamp);
-    final timeStr =
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    // File/image messages show full date+time; regular messages show time only.
+    final timeStr = (isFile || isImage)
+        ? '${(time.year % 100).toString().padLeft(2, '0')}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
+        : '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
-    // 저장된 파일/이미지가 있으면 미리보기 버블
+    // If the file has been saved locally, render the interactive file bubble.
     final savedPath = (isFile || isImage) ? _filePaths[displayText] : null;
     if (savedPath != null) {
       final kind = _fileKinds[displayText] ??
@@ -742,7 +817,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       );
     }
 
-    // 아직 전송/수신 중이거나 데이터 없음: 아이콘 + 파일명 텍스트 버블
+    // Transfer pending or data not yet received: show icon + filename text only.
     final icon = isImage
         ? Icons.image_outlined
         : isFile
@@ -806,12 +881,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     children: [
                       content,
                       const SizedBox(height: 4),
-                      Text(
-                        timeStr,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: _textPrimary.withAlpha(153),
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            timeStr,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: _textPrimary.withAlpha(153),
+                            ),
+                          ),
+                          if ((isFile || isImage) && !isOut) ...[
+                            const SizedBox(width: 4),
+                            _failedFileNames.contains(displayText)
+                                ? const Icon(Icons.cancel, size: 12, color: Color(0xFFFF6B6B))
+                                : Icon(Icons.access_time, size: 12, color: _textPrimary.withAlpha(100)),
+                          ],
+                        ],
                       ),
                     ],
                   ),
@@ -930,9 +1016,47 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               right: isOut ? 8 : 0,
               top: 2,
             ),
-            child: Text(timeStr,
-                style:
-                    TextStyle(fontSize: 10, color: _textPrimary.withAlpha(153))),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(timeStr,
+                    style: TextStyle(
+                        fontSize: 10, color: _textPrimary.withAlpha(153))),
+                const SizedBox(width: 4),
+                if (isOut) ...[
+                  Builder(builder: (ctx) {
+                    final status = _deliveryStatus[fileName];
+                    if (status == null) {
+                      // No tracking info: locally saved only
+                      return Icon(Icons.check_circle,
+                          size: 12, color: _textPrimary.withAlpha(100));
+                    }
+                    final allDelivered = status.received >= status.total;
+                    return Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(
+                        allDelivered ? Icons.check_circle : Icons.cancel,
+                        size: 12,
+                        color: allDelivered
+                            ? const Color(0xFF4FC3F7)
+                            : const Color(0xFFFF6B6B),
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        '${status.received}/${status.total}',
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: allDelivered
+                                ? const Color(0xFF4FC3F7)
+                                : const Color(0xFFFF6B6B)),
+                      ),
+                    ]);
+                  }),
+                ] else ...[
+                  const Icon(Icons.check_circle,
+                      size: 12, color: Color(0xFF4FC3F7)),
+                ],
+              ],
+            ),
           ),
         ],
       ),

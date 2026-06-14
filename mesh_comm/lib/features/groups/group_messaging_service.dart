@@ -11,9 +11,9 @@ import 'package:mesh_comm/features/groups/group_service.dart';
 import 'package:mesh_comm/features/identity/identity_service.dart';
 import 'package:mesh_comm/features/messaging/message_policy.dart';
 
-/// 그룹 채팅 패킷 프로토콜 서비스 (싱글톤).
-/// MessagingService가 수신한 그룹 패킷을 여기로 위임한다.
-/// 그룹 패킷 전송은 MessagingService.sendGroupControlPacket()을 호출한다.
+/// Group chat packet protocol service (singleton).
+/// Delegates group packets received by MessagingService to this service.
+/// For sending group packets, calls MessagingService.sendGroupControlPacket().
 class GroupMessagingService {
   static final GroupMessagingService _instance =
       GroupMessagingService._internal();
@@ -32,23 +32,28 @@ class GroupMessagingService {
       StreamController<ChatGroup>.broadcast();
   final _kickedController =
       StreamController<String>.broadcast();
+  final _receiptController =
+      StreamController<String>.broadcast();
 
-  /// 수신된 그룹 초대
+  /// Received group invitations
   Stream<GroupInvite> get inviteStream => _inviteController.stream;
 
-  /// 수신된 그룹 메시지
+  /// Received group messages
   Stream<GroupMessage> get messageStream => _messageController.stream;
 
-  /// 그룹 멤버/상태 변경 (가입/탈퇴/방장 변경)
+  /// Group member/status changes (join/leave/leader change)
   Stream<ChatGroup> get updateStream => _updateController.stream;
 
-  /// 자신이 추방(kick)된 그룹 ID
+  /// Group ID from which the current user was kicked
   Stream<String> get kickedFromGroupStream => _kickedController.stream;
+
+  /// Emits the transfer tid when a remote member confirms successful file receipt.
+  Stream<String> get fileReceiptStream => _receiptController.stream;
 
   // ── Packet sending (delegated to MessagingService) ────────────────────────
 
-  /// MessagingService.sendGroupControlPacket에 대한 함수 주입.
-  /// main.dart 또는 MessagingService.init()에서 설정된다.
+  /// Function injection for MessagingService.sendGroupControlPacket.
+  /// Set in main.dart or MessagingService.init().
   Future<bool> Function(
     Uint8List targetNodeId,
     MsgType type,
@@ -78,7 +83,7 @@ class GroupMessagingService {
 
   // ── Outgoing actions ──────────────────────────────────────────────────────
 
-  /// 특정 연락처에게 그룹 초대를 전송한다.
+  /// Sends a group invitation to a specific contact.
   Future<bool> sendInvite({
     required ChatGroup group,
     required Uint8List targetNodeId,
@@ -91,7 +96,7 @@ class GroupMessagingService {
     });
   }
 
-  /// 초대 응답 전송 (accept=true: 수락, false: 거절).
+  /// Sends an invitation response (accept=true: accept, false: decline).
   Future<bool> sendInviteResponse({
     required String groupId,
     required Uint8List toNodeId,
@@ -167,6 +172,18 @@ class GroupMessagingService {
     }
   }
 
+  /// Sends a delivery receipt to the original file sender.
+  Future<bool> sendFileReceipt({
+    required String tid,
+    required String groupId,
+    required String toNodeIdHex,
+  }) async {
+    return _send(_fromHex(toNodeIdHex), MsgType.fileReceipt, {
+      'tid': tid,
+      'gid': groupId,
+    });
+  }
+
   /// 그룹 나가기 패킷을 모든 멤버에게 전송 (relay로 비연결 멤버도 수신).
   Future<void> broadcastLeave({
     required ChatGroup group,
@@ -203,6 +220,10 @@ class GroupMessagingService {
           await _handleMemberUpdate(json);
         case MsgType.groupLeave:
           await _handleLeave(json, senderNodeId);
+        case MsgType.fileReceipt:
+          final rtid = json['tid'] as String;
+          debugPrint('[GroupMsg] fileReceipt: tid=${rtid.substring(0, 8)} from ${_hex(senderNodeId).substring(0, 8)}');
+          _receiptController.add(rtid);
         default:
           break;
       }
@@ -239,15 +260,20 @@ class GroupMessagingService {
   ) async {
     final groupId = json['gid'] as String;
     final accepted = json['ok'] as bool;
+    debugPrint('[GroupMsg] inviteResp: gid=$groupId accepted=$accepted sender=${_hex(senderNodeId).substring(0, 8)}');
     if (!accepted) return;
 
     final group = await _groupService.getGroup(groupId);
-    if (group == null) return;
+    if (group == null) {
+      debugPrint('[GroupMsg] inviteResp: group not found gid=$groupId');
+      return;
+    }
+    debugPrint('[GroupMsg] inviteResp: found group "${group.name}", adding member');
 
     // 신규 멤버 DB 추가
     await _groupService.addMember(groupId, senderNodeId);
 
-    // 기존 멤버들에게 신규 멤버 가입 공지 (relay 통해 비연결 멤버도 수신)
+    // Notify existing members that the new member joined.
     final myHex = _hex(IdentityService().myNodeId);
     final newMemberHex = _hex(senderNodeId);
     final updatePayload = {
@@ -257,8 +283,20 @@ class GroupMessagingService {
     };
     for (final member in group.members) {
       if (member.nodeIdHex == myHex) continue;
-      if (member.nodeIdHex == newMemberHex) continue; // 본인에게는 불필요
+      if (member.nodeIdHex == newMemberHex) continue;
       await _send(member.nodeId, MsgType.groupMemberUpdate, updatePayload);
+    }
+
+    // Notify the new joiner about each member who had already accepted before them.
+    // Without this, sequential accepts leave the later joiner unaware of earlier ones.
+    for (final member in group.members) {
+      if (member.nodeIdHex == myHex) continue;
+      if (member.nodeIdHex == newMemberHex) continue;
+      await _send(senderNodeId, MsgType.groupMemberUpdate, {
+        'gid': groupId,
+        'act': 'add',
+        'tid': member.nodeIdHex,
+      });
     }
 
     final updated = await _groupService.getGroup(groupId);
@@ -364,5 +402,6 @@ class GroupMessagingService {
     _messageController.close();
     _updateController.close();
     _kickedController.close();
+    _receiptController.close();
   }
 }

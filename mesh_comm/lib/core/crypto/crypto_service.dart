@@ -5,13 +5,13 @@ import 'package:cryptography/cryptography.dart';
 
 /// CryptoService
 ///
-/// 오프라인 P2P 메시 네트워크를 위한 암호화 서비스.
-/// Ed25519 서명, X25519 키교환, AES-GCM 암호화를 담당한다.
+/// Cryptographic service for offline P2P mesh networking.
+/// Handles Ed25519 signing, X25519 key exchange, and AES-GCM encryption.
 ///
-/// 보안 원칙 (RULES.md R-06, R-07, R-14):
-///   - node_id = SHA-256(공개키) 앞 16 bytes (R-06)
-///   - 모든 패킷은 Ed25519 서명 필수 (R-07)
-///   - payload는 X25519+AES-GCM으로 암호화, 릴레이 노드는 열람 불가 (R-14)
+/// Security principles (RULES.md R-06, R-07, R-14):
+///   - node_id = first 16 bytes of SHA-256(public key) (R-06)
+///   - All packets must be Ed25519-signed (R-07)
+///   - Payload is encrypted with X25519+AES-GCM; relay nodes cannot read it (R-14)
 class CryptoService {
   static final CryptoService _instance = CryptoService._internal();
   factory CryptoService() => _instance;
@@ -21,11 +21,11 @@ class CryptoService {
   final X25519 _x25519 = X25519();
   final AesGcm _aesGcm = AesGcm.with256bits();
 
-  // ── 1. Ed25519 키쌍 생성 ───────────────────────────────────────────────────
+  // ── 1. Ed25519 key pair generation ────────────────────────────────────────
 
-  /// Ed25519 키쌍을 생성한다.
+  /// Generates an Ed25519 key pair.
   ///
-  /// 반환값: `({Uint8List publicKey, Uint8List privateKey})`
+  /// Returns: `({Uint8List publicKey, Uint8List privateKey})`
   ///   - publicKey  32 bytes
   ///   - privateKey 32 bytes (seed)
   Future<({Uint8List publicKey, Uint8List privateKey})>
@@ -44,7 +44,7 @@ class CryptoService {
     }
   }
 
-  /// X25519 메시지 암호화 키쌍을 생성한다.
+  /// Generates an X25519 message encryption key pair.
   Future<({Uint8List publicKey, Uint8List privateKey})>
   generateEncryptionKeyPair() async {
     final keyPair = await _x25519.newKeyPair();
@@ -57,23 +57,23 @@ class CryptoService {
     );
   }
 
-  // ── 2. node_id 생성 ────────────────────────────────────────────────────────
+  // ── 2. node_id generation ──────────────────────────────────────────────────
 
-  /// node_id = SHA-256(publicKey) 앞 16 bytes.
+  /// node_id = first 16 bytes of SHA-256(publicKey).
   ///
-  /// 결정적(deterministic) 생성 → 위조 불가 (R-06).
+  /// Deterministic generation → not forgeable (R-06).
   Uint8List nodeIdFromPublicKey(Uint8List publicKey) {
-    // cryptography 패키지의 Sha256.hash()는 async이므로
-    // 이 동기 메서드에서는 내부 순수-Dart SHA-256 구현을 사용한다.
+    // cryptography package's Sha256.hash() is async, so
+    // this synchronous method uses the internal pure-Dart SHA-256 implementation.
     final hash = _syncSha256(publicKey);
     return Uint8List.fromList(hash.sublist(0, 16));
   }
 
-  // ── 3. 패킷 서명 ───────────────────────────────────────────────────────────
+  // ── 3. Packet signing ──────────────────────────────────────────────────────
 
-  /// data를 Ed25519 개인키로 서명한다.
+  /// Signs data with an Ed25519 private key.
   ///
-  /// 반환값: 64 bytes 서명
+  /// Returns: 64-byte signature
   Future<Uint8List> sign(Uint8List data, Uint8List privateKey) async {
     try {
       final keyPair = await _ed25519.newKeyPairFromSeed(privateKey);
@@ -84,11 +84,11 @@ class CryptoService {
     }
   }
 
-  // ── 4. 서명 검증 ───────────────────────────────────────────────────────────
+  // ── 4. Signature verification ──────────────────────────────────────────────
 
-  /// Ed25519 서명을 검증한다.
+  /// Verifies an Ed25519 signature.
   ///
-  /// 검증 실패 시 false 반환 (예외 throw 금지 — R-07 서명 실패 패킷 폐기).
+  /// Returns false on verification failure (must not throw — R-07 discard packets with invalid signatures).
   Future<bool> verify(
     Uint8List data,
     Uint8List signature,
@@ -104,12 +104,12 @@ class CryptoService {
     }
   }
 
-  // ── 5. X25519 공유 비밀 생성 ───────────────────────────────────────────────
+  // ── 5. X25519 shared secret generation ────────────────────────────────────
 
-  /// X25519 ECDH로 공유 비밀(shared secret)을 계산한다.
+  /// Computes a shared secret via X25519 ECDH.
   ///
-  /// E2E 암호화 키 재료로 사용된다 (R-14).
-  /// 반환값: 32 bytes raw shared secret
+  /// Used as E2E encryption key material (R-14).
+  /// Returns: 32-byte raw shared secret
   Future<Uint8List> computeSharedSecret(
     Uint8List myPrivateKey,
     Uint8List theirPublicKey,
@@ -131,12 +131,12 @@ class CryptoService {
     }
   }
 
-  // ── 6. AES-GCM 암호화 ─────────────────────────────────────────────────────
+  // ── 6. AES-GCM encryption ─────────────────────────────────────────────────
 
-  /// plaintext를 AES-GCM(256bit)으로 암호화한다.
+  /// Encrypts plaintext with AES-GCM (256-bit).
   ///
-  /// 반환 형식: nonce(12 bytes) || ciphertext+tag
-  /// sharedSecret은 32 bytes여야 한다.
+  /// Return format: nonce(12 bytes) || ciphertext+tag
+  /// sharedSecret must be 32 bytes.
   Future<Uint8List> encrypt(Uint8List plaintext, Uint8List sharedSecret) async {
     try {
       final secretKey = SecretKey(sharedSecret);
@@ -157,11 +157,11 @@ class CryptoService {
     }
   }
 
-  // ── 7. AES-GCM 복호화 ─────────────────────────────────────────────────────
+  // ── 7. AES-GCM decryption ─────────────────────────────────────────────────
 
-  /// nonce(12 bytes) || ciphertext+tag 형식 바이트를 복호화한다.
+  /// Decrypts bytes in nonce(12 bytes) || ciphertext+tag format.
   ///
-  /// 복호화 실패(MAC 불일치, 잘못된 키 등) 시 null 반환.
+  /// Returns null on decryption failure (MAC mismatch, wrong key, etc.).
   Future<Uint8List?> decrypt(
     Uint8List ciphertext,
     Uint8List sharedSecret,
@@ -185,36 +185,36 @@ class CryptoService {
     }
   }
 
-  // ── 8. 공개키 핑거프린트 ──────────────────────────────────────────────────
+  // ── 8. Public key fingerprint ─────────────────────────────────────────────
 
-  /// TOFU 확인용 공개키 핑거프린트.
+  /// Public key fingerprint for TOFU verification.
   ///
-  /// 형식: "A1B2-C3D4-E5F6-G7H8" (SHA-256 앞 8 bytes, 4그룹 hex 대문자)
-  /// 사용자가 구두 또는 QR로 대조한다 (R-08).
+  /// Format: "A1B2-C3D4-E5F6-G7H8" (first 8 bytes of SHA-256, 4-group uppercase hex)
+  /// Users compare verbally or via QR (R-08).
   String fingerprint(Uint8List publicKey) {
     final hash = _syncSha256(publicKey);
     final hex = hash
         .sublist(0, 8)
         .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
         .join();
-    // 2자리씩 붙여서 4그룹(4bytes = 8hex chars per group)으로 분할
+    // Concatenate 2 chars at a time and split into 4 groups (4 bytes = 8 hex chars per group)
     return '${hex.substring(0, 4)}-'
         '${hex.substring(4, 8)}-'
         '${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}';
   }
 
-  // ── 내부: 동기 SHA-256 ────────────────────────────────────────────────────
+  // ── Internal: synchronous SHA-256 ────────────────────────────────────────
 
-  /// 순수 Dart로 구현된 SHA-256.
+  /// Pure-Dart SHA-256 implementation.
   ///
-  /// cryptography 패키지의 Sha256.hash()는 async이므로,
-  /// nodeIdFromPublicKey(동기 메서드)와 fingerprint(동기 메서드)에서
-  /// 사용하기 위해 내부 동기 구현을 제공한다.
+  /// Because cryptography package's Sha256.hash() is async,
+  /// this internal synchronous implementation is provided for use in
+  /// nodeIdFromPublicKey (sync method) and fingerprint (sync method).
   ///
-  /// 표준 FIPS 180-4 SHA-256 구현.
+  /// Standard FIPS 180-4 SHA-256 implementation.
   static Uint8List _syncSha256(Uint8List data) {
-    // SHA-256 초기 해시값 (첫 8개 소수의 제곱근 분수부)
+    // SHA-256 initial hash values (fractional parts of square roots of first 8 primes)
     final h = [
       0x6a09e667,
       0xbb67ae85,
@@ -226,7 +226,7 @@ class CryptoService {
       0x5be0cd19,
     ];
 
-    // SHA-256 라운드 상수 (첫 64개 소수의 세제곱근 분수부)
+    // SHA-256 round constants (fractional parts of cube roots of first 64 primes)
     const k = [
       0x428a2f98,
       0x71374491,
@@ -294,7 +294,7 @@ class CryptoService {
       0xc67178f2,
     ];
 
-    // 패딩
+    // Padding
     final bitLen = data.length * 8;
     final padLen = (data.length + 9 + 63) & ~63;
     final padded = Uint8List(padLen);
@@ -305,7 +305,7 @@ class CryptoService {
       padded[padLen - 8 + i] = (bitLen >> (56 - i * 8)) & 0xff;
     }
 
-    // 블록 처리
+    // Block processing
     final hh = List<int>.from(h);
     for (var offset = 0; offset < padLen; offset += 64) {
       final w = List<int>.filled(64, 0);

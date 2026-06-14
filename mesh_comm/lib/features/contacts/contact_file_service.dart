@@ -23,7 +23,7 @@ class ContactFileService {
     return importContactsFromJson(rawJson);
   }
 
-  /// 선택된 연락처를 독립 파일 JSON으로 export.
+  /// Exports selected contacts to a standalone JSON file.
   Future<String> exportContactsToJson(List<Contact> contacts) async {
     final payload = {
       'format': 'mesh_comm_contacts',
@@ -34,7 +34,7 @@ class ContactFileService {
     return const JsonEncoder.withIndent('  ').convert(payload);
   }
 
-  /// 대화(메시지)를 독립 파일 JSON으로 export.
+  /// Exports conversations (messages) to a standalone JSON file.
   Future<String> exportConversationsToJson() async {
     final rows = await _db.exportAllMessagesRaw();
     final payload = {
@@ -46,7 +46,7 @@ class ContactFileService {
     return const JsonEncoder.withIndent('  ').convert(payload);
   }
 
-  /// 연락처 파일에서 import (기존 연락처에 merge, 중복 skip).
+  /// Imports from a contacts file (merges into existing contacts, skips duplicates).
   Future<int> importContactsFromJson(String rawJson) async {
     final decoded = jsonDecode(rawJson);
     if (decoded is! Map<String, dynamic>) {
@@ -63,14 +63,14 @@ class ContactFileService {
   Future<int> importContactsFromBackupJson(String rawJson) =>
       importContactsFromJson(rawJson);
 
-  /// 대화 파일에서 import (기존 메시지 전부 삭제 후 교체).
+  /// Imports from a conversations file (deletes all existing messages, then replaces).
   Future<int> importConversationsFromJson(String rawJson) async {
     final decoded = jsonDecode(rawJson);
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('대화 파일이 올바르지 않습니다.');
     }
-    // 독립 포맷: { "format": "mesh_comm_conversations", "messages": [...] }
-    // 구버전 통합 포맷: { "conversations": { "messages": [...] } }
+    // Standalone format: { "format": "mesh_comm_conversations", "messages": [...] }
+    // Legacy combined format: { "conversations": { "messages": [...] } }
     final List? messages;
     if (decoded['format'] == 'mesh_comm_conversations') {
       messages = decoded['messages'] as List?;

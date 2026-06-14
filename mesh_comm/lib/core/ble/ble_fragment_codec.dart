@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'ble_constants.dart';
 
-/// BLE ATT payload 크기에 맞춰 MeshPacket bytes를 나누는 전송 프레임.
+/// Transmission frame that splits MeshPacket bytes to fit BLE ATT payload size.
 class BleFragmentCodec {
   BleFragmentCodec._();
 
@@ -92,7 +92,7 @@ class BleFragmentFrame {
   });
 }
 
-/// device별로 도착한 BLE 조각을 모아 원래 MeshPacket bytes로 복원한다.
+/// Collects BLE fragments arriving per device and reassembles the original MeshPacket bytes.
 class BleFragmentReassembler {
   final Map<String, _FragmentAssembly> _assemblies = {};
 

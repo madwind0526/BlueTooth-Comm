@@ -1,10 +1,10 @@
 // lib/core/lan/lan_service.dart
 //
-// LAN/Wi-Fi 전송 계층.
-// UDP 멀티캐스트로 동일 네트워크 내 MeshComm 피어를 발견하고
-// TCP 소켓으로 MeshPacket을 교환한다.
+// LAN/Wi-Fi transport layer.
+// Discovers MeshComm peers on the same network via UDP multicast and
+// exchanges MeshPackets over TCP sockets.
 //
-// 패킷 프레이밍: [4바이트 BE uint32 길이][MeshPacket 바이트]
+// Packet framing: [4-byte BE uint32 length][MeshPacket bytes]
 
 import 'dart:async';
 import 'dart:convert';
@@ -17,7 +17,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../packet/mesh_packet.dart';
 import 'lan_constants.dart';
 
-/// 발견된 LAN 피어 정보.
+/// Discovered LAN peer information.
 class LanPeer {
   final String nodeIdHex;
   final InternetAddress address;
@@ -30,9 +30,9 @@ class LanPeer {
   });
 }
 
-/// LAN/Wi-Fi 전송 서비스 (싱글톤).
+/// LAN/Wi-Fi transport service (singleton).
 ///
-/// ## 초기화
+/// ## Initialization
 /// ```dart
 /// await LanService().init(
 ///   myNodeId: identity.myNodeId,
@@ -49,31 +49,31 @@ class LanService {
   Uint8List? _myNodeId;
   void Function(MeshPacket packet, String peerId)? _onPacketReceived;
 
-  // nodeIdHex → Socket (활성 TCP 연결)
+  // nodeIdHex → Socket (active TCP connections)
   final Map<String, Socket> _peers = {};
 
-  // 연결 중인 nodeIdHex (중복 연결 방지)
+  // nodeIdHex values currently connecting (prevents duplicate connections)
   final Set<String> _connecting = {};
 
-  // 소켓별 수신 버퍼 (부분 수신 처리)
+  // Per-socket receive buffers (handles partial receives)
   final Map<String, _ReceiveBuffer> _buffers = {};
 
-  // 마지막으로 알려진 피어 주소 캐시 (끊김 후 즉시 재연결용)
+  // Cache of last known peer addresses (for immediate reconnect after disconnect)
   final Map<String, LanPeer> _peerAddressCache = {};
 
-  // 피어별 재연결 시도 횟수 (exponential backoff 계산용)
+  // Per-peer reconnect attempt count (used for exponential backoff)
   final Map<String, int> _reconnectAttempts = {};
 
   // ── LAN Heartbeat ─────────────────────────────────────────────────────────
-  // PING/PONG: 0xFF 매직 바이트로 MeshPacket과 구별.
-  // 목적: 무음 TCP 끊김 감지 (WiFi 단절 후 onDone/onError 없이 소켓이 죽는 경우).
+  // PING/PONG: distinguished from MeshPacket by 0xFF magic byte.
+  // Purpose: detect silent TCP disconnects (socket dying after WiFi loss with no onDone/onError).
   static const int _hbMagic    = 0xFF;
   static const int _hbPingByte = 0x50; // 'P'
   static const int _hbPongByte = 0x51; // 'Q'
   static const int _hbIntervalSec = 8;
   static const int _hbTimeoutMs  = 20000; // PONG 20초 무응답 → 연결 해제
 
-  // nodeIdHex → 마지막 PONG 수신 시각 (ms)
+  // nodeIdHex → last PONG received timestamp (ms)
   final Map<String, int> _lastPongMs = {};
   Timer? _heartbeatTimer;
   Timer? _heartbeatWatchdog;
@@ -82,7 +82,7 @@ class LanService {
   ServerSocket? _tcpServer;
   Timer? _beaconTimer;
 
-  // 연결된 피어 nodeIdHex 목록 스트림
+  // Stream of connected peer nodeIdHex list
   final StreamController<List<String>> _peersController =
       StreamController<List<String>>.broadcast();
   Set<String> _lastEmittedPeerIds = {};
@@ -98,7 +98,7 @@ class LanService {
 
   bool hasPeer(String nodeIdHex) => _running && _peers.containsKey(nodeIdHex);
 
-  // ── 초기화 ──────────────────────────────────────────────────────────────────
+  // ── Initialization ────────────────────────────────────────────────────────
 
   Future<void> init({
     required Uint8List myNodeId,
@@ -111,13 +111,13 @@ class LanService {
     await start();
   }
 
-  /// LAN 서비스를 시작(재시작)한다. init() 이후에만 유효.
+  /// Starts (or restarts) the LAN service. Only valid after init().
   Future<void> start() async {
     if (_myNodeId == null) return;
     if (_running) return;
     _running = true;
-    // Windows: stop() 직후 즉시 bind 하면 포트가 아직 해제 중일 수 있어 실패.
-    // 짧은 대기 후 bind 시도.
+    // Windows: binding immediately after stop() may fail if the port is still releasing.
+    // Wait briefly before binding.
     await Future<void>.delayed(const Duration(milliseconds: 200));
     if (!_running) return;
     await _startTcpServer();
@@ -126,12 +126,12 @@ class LanService {
     if (!_running) return;
     _startBeacon();
     _startHeartbeat();
-    // 이전에 알고 있던 피어에 즉시 재연결 시도 (WiFi 토글 복구)
+    // Immediately attempt to reconnect to previously known peers (WiFi toggle recovery)
     _reconnectCachedPeers();
   }
 
-  /// LAN 서비스를 중단한다. start()로 재시작 가능.
-  /// 주소 캐시(_peerAddressCache)는 보존 — start() 후 즉시 재연결에 사용.
+  /// Stops the LAN service. Can be restarted via start().
+  /// Address cache (_peerAddressCache) is preserved for immediate reconnect after start().
   Future<void> stop() async {
     _running = false;
     _heartbeatTimer?.cancel();
@@ -151,8 +151,8 @@ class LanService {
     _buffers.clear();
     _connecting.clear();
     _lastPongMs.clear();
-    _reconnectAttempts.clear(); // stop 후 start 시 처음부터 재시도
-    // _peerAddressCache 는 의도적으로 유지 — start() 재연결용
+    _reconnectAttempts.clear(); // reset on stop so start() retries from scratch
+    // _peerAddressCache is intentionally preserved — used for reconnect after start()
     _notifyChange();
   }
 
@@ -164,7 +164,7 @@ class LanService {
     _initialized = false;
   }
 
-  // ── 패킷 전송 ───────────────────────────────────────────────────────────────
+  // ── Packet sending ────────────────────────────────────────────────────────
 
   Future<bool> sendPacket(MeshPacket packet, String peerNodeIdHex) async {
     if (!_running) return false;
@@ -183,7 +183,7 @@ class LanService {
     }
   }
 
-  /// 연결된 모든 LAN 피어에게 패킷을 브로드캐스트한다.
+  /// Broadcasts a packet to all connected LAN peers.
   Future<int> broadcastPacket(MeshPacket packet) async {
     if (!_running) return 0;
     final peerIds = List<String>.from(_peers.keys);
@@ -229,7 +229,7 @@ class LanService {
     if (_peers.containsKey(peer.nodeIdHex)) return;
     if (_connecting.contains(peer.nodeIdHex)) return;
     _connecting.add(peer.nodeIdHex);
-    _peerAddressCache[peer.nodeIdHex] = peer; // 주소 캐시 업데이트
+    _peerAddressCache[peer.nodeIdHex] = peer; // update address cache
     try {
       final socket = await Socket.connect(
         peer.address,
@@ -268,11 +268,11 @@ class LanService {
           final frame = buffer.tryReadFrame();
           if (frame == null) break;
 
-          // ── LAN Heartbeat 우선 처리 ────────────────────────────────────────
-          // MsgPacket 파싱 전에 0xFF 매직 바이트로 PING/PONG 구별.
+          // ── LAN Heartbeat: handle first ───────────────────────────────────
+          // Distinguish PING/PONG from MeshPacket by 0xFF magic byte before parsing.
           if (frame.length >= 2 && frame[0] == _hbMagic) {
             if (frame[1] == _hbPingByte) {
-              // PING 수신 → PONG 응답 (현재 연결 수 포함)
+              // PING received → respond with PONG (includes current connection count)
               if (resolvedId != null) {
                 _log('[HB] PING ← $resolvedId');
               }
@@ -284,7 +284,7 @@ class LanService {
                 unawaited(socket.flush().timeout(const Duration(seconds: 3)));
               } catch (_) {}
             } else if (frame[1] == _hbPongByte) {
-              // PONG 수신 → 생존 확인
+              // PONG received → confirm peer is alive
               if (resolvedId != null) {
                 final connCount = frame.length > 2 ? frame[2] : 0;
                 _lastPongMs[resolvedId!] = DateTime.now().millisecondsSinceEpoch;
@@ -423,7 +423,7 @@ class LanService {
     if (peer != null) _connectToPeer(peer);
   }
 
-  /// 주소 캐시에 있는 피어에 즉시 재연결 시도 (start() 후 호출).
+  /// Immediately attempts to reconnect peers in the address cache (called after start()).
   void _reconnectCachedPeers() {
     if (!_running) return;
     for (final peer in List<LanPeer>.from(_peerAddressCache.values)) {
@@ -469,7 +469,7 @@ class LanService {
     }
   }
 
-  // ── UDP 비콘 ─────────────────────────────────────────────────────────────────
+  // ── UDP beacon ───────────────────────────────────────────────────────────────
 
   Future<void> _startUdpSocket() async {
     try {
@@ -484,15 +484,15 @@ class LanService {
       }
       _udpSocket!.broadcastEnabled = true;
 
-      // 모든 네트워크 인터페이스에 멀티캐스트 join.
-      // Windows: 이더넷+WiFi가 동시에 있을 때 한 인터페이스만 join 하면 수신 실패.
+      // Join multicast on all network interfaces.
+      // Windows: when both Ethernet and WiFi are active, joining only one interface fails to receive.
       try {
         final interfaces = await NetworkInterface.list(
           type: InternetAddressType.IPv4,
           includeLinkLocal: false,
         );
         if (interfaces.isEmpty) {
-          // 인터페이스 목록을 못 얻은 경우 기본 join
+          // Fallback join when interface list cannot be retrieved
           _udpSocket!.joinMulticast(
             InternetAddress(LanConstants.multicastGroup),
           );
@@ -534,12 +534,12 @@ class LanService {
     });
   }
 
-  /// LAN TCP Heartbeat — PING을 주기적으로 전송하고 무응답 피어를 제거한다.
+  /// LAN TCP Heartbeat — periodically sends PING and removes unresponsive peers.
   void _startHeartbeat() {
     if (!_running) return;
     final pingFrame = _buildFrame(Uint8List.fromList([_hbMagic, _hbPingByte]));
 
-    // PING 전송: 연결된 모든 피어에 주기적으로
+    // PING send: periodically to all connected peers
     _heartbeatTimer = Timer.periodic(
       const Duration(seconds: _hbIntervalSec),
       (_) {
@@ -554,7 +554,7 @@ class LanService {
       },
     );
 
-    // Watchdog: 마지막 PONG으로부터 _hbTimeoutMs 초과 시 연결 해제
+    // Watchdog: disconnect if _hbTimeoutMs has elapsed since last PONG
     _heartbeatWatchdog = Timer.periodic(
       const Duration(seconds: _hbIntervalSec),
       (_) {
@@ -563,7 +563,7 @@ class LanService {
         for (final peerId in List<String>.from(_peers.keys)) {
           final lastPong = _lastPongMs[peerId];
           if (lastPong != null && now - lastPong > _hbTimeoutMs) {
-            _log('[HB] $peerId 응답 없음 (${now - lastPong}ms) → 연결 해제');
+            _log('[HB] $peerId no response (${now - lastPong}ms) → disconnecting');
             _peers[peerId]?.destroy();
             _removePeer(peerId);
           }
@@ -582,7 +582,7 @@ class LanService {
     });
     final bytes = utf8.encode(payload);
 
-    // 멀티캐스트
+    // Multicast
     try {
       _udpSocket!.send(
         bytes,
@@ -591,7 +591,7 @@ class LanService {
       );
     } catch (_) {}
 
-    // 브로드캐스트 (255.255.255.255)
+    // Broadcast (255.255.255.255)
     try {
       _udpSocket!.send(
         bytes,
@@ -612,7 +612,7 @@ class LanService {
       final tcpPort = map['tcpPort'] as int?;
       if (nodeIdHex == null || tcpPort == null) return;
 
-      // 자기 자신 비콘 무시
+      // Ignore own beacon
       if (_myNodeId != null && nodeIdHex == _hexOf(_myNodeId!)) return;
 
       if (!_peers.containsKey(nodeIdHex) && !_connecting.contains(nodeIdHex)) {
@@ -626,9 +626,9 @@ class LanService {
     } catch (_) {}
   }
 
-  // ── 유틸 ─────────────────────────────────────────────────────────────────────
+  // ── Utilities ─────────────────────────────────────────────────────────────
 
-  /// 4바이트 BE 길이 + 데이터 프레임 생성
+  /// Builds a frame with 4-byte BE length prefix + data
   static Uint8List _buildFrame(Uint8List data) {
     final frame = Uint8List(4 + data.length);
     final bd = ByteData.sublistView(frame);
@@ -655,21 +655,21 @@ class LanService {
       bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }
 
-// ── 수신 버퍼 ──────────────────────────────────────────────────────────────────
+// ── Receive buffer ────────────────────────────────────────────────────────────
 
-/// TCP 스트림에서 [4-byte length][data] 프레임을 재조립한다.
+/// Reassembles [4-byte length][data] frames from a TCP stream.
 class _ReceiveBuffer {
   final _buf = <int>[];
 
   void append(List<int> data) => _buf.addAll(data);
 
-  /// 완성된 프레임이 있으면 반환, 없으면 null.
+  /// Returns a completed frame if available, or null.
   Uint8List? tryReadFrame() {
     if (_buf.length < 4) return null;
     final length =
         (_buf[0] << 24) | (_buf[1] << 16) | (_buf[2] << 8) | _buf[3];
     if (length <= 0 || length > 4 * 1024 * 1024) {
-      // 비정상 길이 — 버퍼 초기화
+      // Abnormal length — clear the buffer
       _buf.clear();
       return null;
     }

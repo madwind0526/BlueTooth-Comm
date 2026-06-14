@@ -3,27 +3,27 @@
 class LanConstants {
   LanConstants._();
 
-  /// UDP 비콘 수신 포트 (멀티캐스트/브로드캐스트 대기)
+  /// UDP beacon receive port (listens for multicast/broadcast)
   static const int udpPort = 7654;
 
-  /// TCP GATT 서버 포트
+  /// TCP GATT server port
   static const int tcpPort = 7655;
 
-  /// UDP 멀티캐스트 그룹 (링크-로컬 범위)
+  /// UDP multicast group (link-local scope)
   static const String multicastGroup = '224.0.0.251';
 
-  /// 비콘 전송 주기
+  /// Beacon transmission interval
   static const Duration beaconInterval = Duration(seconds: 5);
 
-  /// TCP 끊김 후 재연결 대기 시간
+  /// Reconnect delay after TCP disconnection
   static const Duration reconnectDelay = Duration(seconds: 3);
 
-  /// 피어 응답 없을 시 연결 타임아웃
+  /// Connection timeout when peer does not respond
   static const Duration connectTimeout = Duration(seconds: 5);
 
-  /// TCP 패킷 수신 버퍼 크기
+  /// TCP packet receive buffer size
   static const int readBufferSize = 65536;
 
-  /// 비콘 식별자 (첫 4바이트)
+  /// Beacon identifier (first 4 bytes)
   static const String beaconMagic = 'MSHC';
 }

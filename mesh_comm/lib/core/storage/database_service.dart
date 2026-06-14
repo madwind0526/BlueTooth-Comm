@@ -8,12 +8,12 @@ import 'package:path/path.dart' as p;
 /// Singleton service managing all local SQLite persistence.
 ///
 /// Tables:
-///   identity      — 자신의 Ed25519 키쌍 (항상 1행)
-///   contacts      — 상대방 공개키 + TOFU 신뢰 상태
-///   messages      — 수신/발신 메시지 (복호화된 payload)
-///   seen_messages — msg_id 캐시 (R-09: 중복·루프 방지, 30분 보존)
+///   identity      — own Ed25519 key pair (always 1 row)
+///   contacts      — peer public keys + TOFU trust status
+///   messages      — received/sent messages (decrypted payload)
+///   seen_messages — msg_id cache (R-09: dedup/loop prevention, kept 30 min)
 class DatabaseService {
-  // ── 싱글톤 ──────────────────────────────────────────────────────────────
+  // ── Singleton ────────────────────────────────────────────────────────────
   static final DatabaseService _instance = DatabaseService._internal();
   factory DatabaseService() => _instance;
   DatabaseService._internal();
@@ -23,13 +23,13 @@ class DatabaseService {
 
   Database? _db;
 
-  // seen_messages 보존 기간: 30분 (ms)
+  // seen_messages retention period: 30 minutes (ms)
   static const int _seenMessageTtlMs = 30 * 60 * 1000;
 
-  // ── 초기화 ───────────────────────────────────────────────────────────────
+  // ── Initialization ───────────────────────────────────────────────────────
 
-  /// DB 파일을 열고 테이블을 생성한다.
-  /// 앱 시작 시 1회 호출할 것.
+  /// Opens the DB file and creates tables.
+  /// Call once at app startup.
   Future<void> init() async {
     if (_db != null) return;
 
@@ -61,7 +61,7 @@ class DatabaseService {
   }
 
   Database get _database {
-    assert(_db != null, 'DatabaseService.init() 를 먼저 호출하세요.');
+    assert(_db != null, 'Call DatabaseService.init() first.');
     return _db!;
   }
 
@@ -296,9 +296,9 @@ class DatabaseService {
 
   // ── Identity ─────────────────────────────────────────────────────────────
 
-  /// 자신의 키쌍을 저장한다 (기존 행을 교체).
+  /// Saves own key pair (replaces existing row).
   ///
-  /// [privateKey] 는 암호화된 상태로 전달되어야 한다 (crypto 레이어 책임).
+  /// [privateKey] must be passed in encrypted form (responsibility of the crypto layer).
   Future<void> saveIdentity(
     Uint8List nodeId,
     Uint8List publicKey,
@@ -316,7 +316,7 @@ class DatabaseService {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 기존 신원에 X25519 메시지 암호화 키쌍을 추가한다.
+  /// Adds an X25519 message encryption key pair to the existing identity.
   Future<void> updateIdentityEncryptionKeys(
     Uint8List encryptionPublicKey,
     Uint8List encryptionPrivateKey,
@@ -327,7 +327,7 @@ class DatabaseService {
     }, where: 'id = 1');
   }
 
-  /// DB의 개인키 seed를 0으로 덮어쓴다 (secure storage 마이그레이션 후 호출).
+  /// Overwrites the private key seed in the DB with zeros (called after secure storage migration).
   Future<void> clearPrivateKeys() async {
     final zeros32 = Uint8List(32);
     await _database.update('identity', {
@@ -336,7 +336,7 @@ class DatabaseService {
     }, where: 'id = 1');
   }
 
-  /// 저장된 자신의 키쌍을 반환한다. 없으면 null.
+  /// Returns the stored own key pair. Returns null if not found.
   Future<Map<String, dynamic>?> getIdentity() async {
     final rows = await _database.query('identity', where: 'id = 1');
     if (rows.isEmpty) return null;
@@ -345,10 +345,10 @@ class DatabaseService {
 
   // ── Contacts ─────────────────────────────────────────────────────────────
 
-  /// 연락처를 삽입하거나 갱신한다.
+  /// Inserts or updates a contact.
   ///
-  /// [trusted] = true 이면 is_trusted = 1 (핑거프린트 직접 확인 후).
-  /// [displayName], [fingerprint] 는 선택 항목.
+  /// [trusted] = true sets is_trusted = 1 (after direct fingerprint verification).
+  /// [displayName] and [fingerprint] are optional.
   Future<void> upsertContact(
     Uint8List nodeId,
     Uint8List publicKey, {
@@ -367,7 +367,7 @@ class DatabaseService {
   }) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
-    // 기존 연락처가 있으면 first_seen 을 보존하고 나머지를 갱신
+    // If contact exists, preserve first_seen and update the rest
     final existing = await getContact(nodeId);
 
     await _database.insert('contacts', {
@@ -395,7 +395,7 @@ class DatabaseService {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 기존 연락처의 X25519 메시지 암호화 공개키만 갱신한다.
+  /// Updates only the X25519 message encryption public key for an existing contact.
   Future<void> setContactEncryptionPublicKey(
     Uint8List nodeId,
     Uint8List encryptionPublicKey,
@@ -411,7 +411,7 @@ class DatabaseService {
     );
   }
 
-  /// node_id 로 연락처를 조회한다. 없으면 null.
+  /// Looks up a contact by node_id. Returns null if not found.
   Future<Map<String, dynamic>?> getContact(Uint8List nodeId) async {
     final rows = await _database.query(
       'contacts',
@@ -422,7 +422,7 @@ class DatabaseService {
     return _blobRow(rows.first);
   }
 
-  /// 전체 연락처 목록을 반환한다 (last_seen 내림차순).
+  /// Returns all contacts (sorted by last_seen descending).
   Future<List<Map<String, dynamic>>> getAllContacts() async {
     final rows = await _database.query(
       'contacts',
@@ -431,7 +431,7 @@ class DatabaseService {
     return rows.map(_blobRow).toList();
   }
 
-  /// 특정 연락처의 신뢰 상태를 변경한다 (R-08 TOFU).
+  /// Changes the trust status of a specific contact (R-08 TOFU).
   Future<void> setTrusted(Uint8List nodeId, bool trusted) async {
     await _database.update(
       'contacts',
@@ -450,7 +450,7 @@ class DatabaseService {
     );
   }
 
-  /// 연락처에 사용자가 기억하기 쉬운 로컬 이름을 저장한다.
+  /// Saves a user-friendly local name for a contact.
   Future<void> setContactDisplayName(
     Uint8List nodeId,
     String? displayName,
@@ -463,7 +463,7 @@ class DatabaseService {
     );
   }
 
-  /// 연락처의 로컬 즐겨찾기 상태를 변경한다.
+  /// Changes the local favorite status of a contact.
   Future<void> setContactFavorite(Uint8List nodeId, bool favorite) async {
     await _database.update(
       'contacts',
@@ -473,7 +473,7 @@ class DatabaseService {
     );
   }
 
-  /// 연락처에 로컬 그룹 이름을 저장한다.
+  /// Saves a local group name for a contact.
   Future<void> setContactGroup(Uint8List nodeId, String? groupName) async {
     await _database.update(
       'contacts',
@@ -513,7 +513,7 @@ class DatabaseService {
     );
   }
 
-  /// 연락처를 로컬 목록에서 삭제한다. 메시지 기록은 보존한다.
+  /// Removes a contact from the local list. Message history is preserved.
   Future<int> deleteContact(Uint8List nodeId) {
     return _database.delete(
       'contacts',
@@ -555,12 +555,12 @@ class DatabaseService {
     return _database.delete('messages');
   }
 
-  /// 모든 메시지를 원시 행으로 반환 (export용).
+  /// Returns all messages as raw rows (for export).
   Future<List<Map<String, dynamic>>> exportAllMessagesRaw() {
     return _database.query('messages', orderBy: 'timestamp ASC');
   }
 
-  /// 메시지를 대량 insert한다. 기존 메시지 삭제 없이 중복만 무시.
+  /// Bulk-inserts messages. Ignores duplicates without deleting existing messages.
   Future<int> importMessagesRaw(List<Map<String, dynamic>> rows) async {
     var count = 0;
     final batch = _database.batch();
@@ -576,7 +576,7 @@ class DatabaseService {
     return count;
   }
 
-  /// 저장된 연락처를 모두 삭제한다.
+  /// Deletes all saved contacts.
   Future<int> deleteAllSavedContacts() async {
     return _database.delete('contacts');
   }
@@ -601,10 +601,10 @@ class DatabaseService {
 
   // ── Messages ──────────────────────────────────────────────────────────────
 
-  /// 메시지를 저장한다.
+  /// Saves a message.
   ///
-  /// [payload] 는 복호화된 본문 (TEXT 메시지의 경우 UTF-8 bytes).
-  /// 중복 msg_id 는 무시한다 (ConflictAlgorithm.ignore).
+  /// [payload] is the decrypted body (UTF-8 bytes for TEXT messages).
+  /// Duplicate msg_id values are ignored (ConflictAlgorithm.ignore).
   Future<void> saveMessage({
     required Uint8List msgId,
     required Uint8List senderId,
@@ -628,9 +628,9 @@ class DatabaseService {
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
-  /// 특정 연락처와의 메시지 목록을 반환한다 (timestamp 오름차순, 최근 [limit]건).
+  /// Returns messages with a specific contact (ascending by timestamp, latest [limit] entries).
   ///
-  /// sender_id 또는 target_id 가 [contactNodeId] 인 행을 조회한다.
+  /// Queries rows where sender_id or target_id equals [contactNodeId].
   Future<List<Map<String, dynamic>>> getMessages(
     Uint8List contactNodeId, {
     Uint8List? myNodeId,
@@ -761,7 +761,7 @@ class DatabaseService {
 
   // ── Seen Messages (R-09) ─────────────────────────────────────────────────
 
-  /// [msgId] 가 seen_messages 테이블에 있으면 true (중복/루프 패킷).
+  /// Returns true if [msgId] is in the seen_messages table (duplicate/loop packet).
   Future<bool> isMessageSeen(Uint8List msgId) async {
     final rows = await _database.query(
       'seen_messages',
@@ -772,8 +772,8 @@ class DatabaseService {
     return rows.isNotEmpty;
   }
 
-  /// [msgId] 를 seen_messages 에 기록한다.
-  /// 이미 존재하면 seen_at 을 갱신한다.
+  /// Records [msgId] in seen_messages.
+  /// Updates seen_at if it already exists.
   Future<void> markMessageSeen(Uint8List msgId) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     await _database.insert('seen_messages', {
@@ -782,8 +782,8 @@ class DatabaseService {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 30분(1,800,000 ms) 이전 seen_messages 항목을 삭제한다 (R-09).
-  /// 앱 시작 시 또는 주기적으로 호출하여 DB 크기를 관리한다.
+  /// Deletes seen_messages entries older than 30 minutes (1,800,000 ms) (R-09).
+  /// Call at app startup or periodically to manage DB size.
   Future<void> cleanOldSeenMessages() async {
     final cutoffMs = DateTime.now().millisecondsSinceEpoch - _seenMessageTtlMs;
     await _database.delete(
@@ -822,11 +822,11 @@ class DatabaseService {
     return _database.query('notices', orderBy: 'timestamp ASC');
   }
 
-  // ── 내부 유틸리티 ─────────────────────────────────────────────────────────
+  // ── Internal utilities ────────────────────────────────────────────────────
 
-  /// sqflite 는 BLOB 컬럼을 Uint8List 로 반환하지만,
-  /// `Map<String, dynamic>` 의 값 타입을 명시적으로 맞춰 두기 위해
-  /// 변환 없이 그대로 반환한다. (sqflite >= 2.0 에서 BLOB → Uint8List 자동 변환)
+  /// sqflite returns BLOB columns as Uint8List, but to keep the
+  /// value types of `Map<String, dynamic>` explicit, return as-is without conversion.
+  /// (sqflite >= 2.0 automatically converts BLOB → Uint8List)
   Map<String, dynamic> _blobRow(Map<String, dynamic> row) => Map.of(row);
 
   String _hex(Uint8List bytes) =>
@@ -996,7 +996,7 @@ class DatabaseService {
     );
   }
 
-  // ── 리소스 해제 (테스트 또는 앱 종료 시) ──────────────────────────────────
+  // ── Resource release (for tests or app shutdown) ──────────────────────────
 
   Future<void> close() async {
     await _db?.close();

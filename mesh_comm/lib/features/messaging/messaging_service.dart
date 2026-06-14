@@ -453,8 +453,12 @@ class MessagingService {
       );
       packet.signature = signature;
 
-      // 4. 브로드캐스트 전송
-      final recipientCount = await _sendPacketToNodeIdCount(
+      // 4. Targeted send + broadcast backup.
+      // _sendPacketToNodeIdCount skips broadcast when LAN "succeeds" but the
+      // socket may be zombie (writes succeed without delivery). Using
+      // _sendTargetedMeshPacketCount ensures BLE broadcast always runs as a
+      // fallback — consistent with how notice messages are delivered.
+      final recipientCount = await _sendTargetedMeshPacketCount(
         packet,
         _hex(targetNodeId),
       );
@@ -1232,6 +1236,7 @@ class MessagingService {
       case MsgType.groupMessage:
       case MsgType.groupMemberUpdate:
       case MsgType.groupLeave:
+      case MsgType.fileReceipt:
         if (_bytesEqual(packet.targetId, _identity.myNodeId)) {
           final decrypted = await _decryptGroupPayload(packet);
           if (decrypted != null) {
@@ -1874,7 +1879,9 @@ class MessagingService {
         packet.toSignableBytes(),
         _identity.myPrivateKeySeed,
       );
-      final recipientCount = await _sendPacketToNodeIdCount(
+      // Same reasoning as sendTextMessage: use _sendTargetedMeshPacketCount so
+      // BLE broadcast always fires as a fallback for zombie LAN connections.
+      final recipientCount = await _sendTargetedMeshPacketCount(
         packet,
         _hex(targetNodeId),
       );
@@ -1888,7 +1895,10 @@ class MessagingService {
   Future<String?> _decryptGroupPayload(MeshPacket packet) async {
     try {
       final senderEncKey = await _contacts.getEncryptionPublicKey(packet.senderId);
-      if (senderEncKey == null) return null;
+      if (senderEncKey == null) {
+        _log('_decryptGroupPayload: no encKey for ${_hex(packet.senderId).substring(0, 8)} type=${packet.msgType}');
+        return null;
+      }
       final sharedSecret = await _crypto.computeSharedSecret(
         _identity.myEncryptionPrivateKeySeed,
         senderEncKey,

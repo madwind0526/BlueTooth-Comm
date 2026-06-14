@@ -5,78 +5,78 @@ import 'dart:typed_data';
 
 import 'msg_type.dart';
 
-/// BLE 메시 네트워크를 통해 전달되는 기본 패킷 단위.
+/// The basic packet unit transmitted over the BLE mesh network.
 ///
-/// ## 이진 레이아웃 (헤더 124 bytes + 가변 payload)
+/// ## Binary layout (124-byte header + variable payload)
 ///
 /// ```
-/// 오프셋   크기    필드
+/// Offset   Size   Field
 /// ──────   ────   ─────────────────────────────────────────
 ///  0        1     protocol_version
 ///  1       16     msg_id      (UUID v4)
-/// 17       16     sender_id   (SHA-256(공개키) 앞 16 bytes)
-/// 33       16     target_id   (수신자 node_id; 브로드캐스트=0xFF×16)
+/// 17       16     sender_id   (first 16 bytes of SHA-256(public key))
+/// 33       16     target_id   (recipient node_id; broadcast=0xFF×16)
 /// 49        1     msg_type    (MsgType.value)
-/// 50        1     ttl         (남은 홉 수, 기본 7)
-/// 51        1     hop_count   (경유 홉 수, 0에서 시작)
+/// 50        1     ttl         (remaining hops, default 7)
+/// 51        1     hop_count   (hops traversed, starts at 0)
 /// 52        8     timestamp   (Unix ms, big-endian int64)
 /// 60       64     signature   (Ed25519, 64 bytes)
-/// 124      var    payload     (암호화된 본문, 최대 4096 bytes)
+/// 124      var    payload     (encrypted body, max 4096 bytes)
 /// ──────
-/// 총       124 + payload.length bytes
+/// Total    124 + payload.length bytes
 /// ```
 class MeshPacket {
-  // ── 필드 ────────────────────────────────────────────────
+  // ── Fields ──────────────────────────────────────────────
 
-  /// 패킷 프로토콜 버전. 버전이 다르면 파싱 단계에서 폐기한다.
+  /// Packet protocol version. Packets with a different version are discarded during parsing.
   final int protocolVersion;
 
-  /// 패킷 고유 ID (UUID v4, 16 bytes). 중복 감지 및 루프 방지에 사용.
+  /// Unique packet ID (UUID v4, 16 bytes). Used for duplicate detection and loop prevention.
   final Uint8List msgId; // 16 bytes
 
-  /// 발신자 node_id (SHA-256(공개키) 앞 16 bytes).
+  /// Sender node_id (first 16 bytes of SHA-256(public key)).
   final Uint8List senderId; // 16 bytes
 
-  /// 수신자 node_id (16 bytes). 브로드캐스트이면 [broadcast].
+  /// Recipient node_id (16 bytes). [broadcast] if this is a broadcast packet.
   final Uint8List targetId; // 16 bytes
 
-  /// 메시지 유형.
+  /// Message type.
   final MsgType msgType; // 1 byte
 
-  /// 남은 홉 수 (기본 7). 릴레이할 때마다 1 감소. 0이 되면 폐기.
+  /// Remaining hop count (default 7). Decremented on each relay. Discarded when 0.
   int ttl; // 1 byte
 
-  /// 경유 홉 수 (0에서 시작). 릴레이할 때마다 1 증가.
+  /// Hops traversed (starts at 0). Incremented on each relay.
   int hopCount; // 1 byte
 
-  /// 발신 Unix timestamp (밀리초). UI 표시용.
+  /// Send Unix timestamp (milliseconds). Used for UI display.
   final int timestamp; // 8 bytes (int64)
 
-  /// Ed25519 발신자 서명 (64 bytes).
-  /// 서명 대상은 [toSignableBytes] 의 반환값.
+  /// Ed25519 sender signature (64 bytes).
+  /// The signed data is the return value of [toSignableBytes].
   Uint8List signature; // 64 bytes
 
-  /// 암호화된 메시지 본문 (가변, 최대 4096 bytes).
+  /// Encrypted message body (variable, max 4096 bytes).
   final Uint8List payload;
 
-  // ── 상수 ────────────────────────────────────────────────
+  // ── Constants ────────────────────────────────────────────
 
-  /// 현재 지원하는 패킷 프로토콜 버전.
+  /// Currently supported packet protocol version.
   static const int currentProtocolVersion = 2;
 
-  /// 브로드캐스트용 target_id (0xFF × 16).
+  /// target_id for broadcast (0xFF × 16).
   static final Uint8List broadcast = Uint8List.fromList(List.filled(16, 0xFF));
 
-  /// 기본 TTL.
+  /// Default TTL.
   static const int defaultTtl = 7;
 
-  /// 헤더 크기 (bytes). signature 포함.
+  /// Header size (bytes), including signature.
   static const int headerSize = 124;
 
-  /// payload 최대 크기 (bytes). BLE 전송 시 작은 조각으로 나눈다.
+  /// Maximum payload size (bytes). Split into smaller fragments for BLE transmission.
   static const int maxPayloadSize = 4096;
 
-  // ── 오프셋 상수 ──────────────────────────────────────────
+  // ── Offset constants ─────────────────────────────────────
   static const int _offProtocolVersion = 0;
   static const int _offMsgId = 1;
   static const int _offSenderId = 17;
@@ -88,7 +88,7 @@ class MeshPacket {
   static const int _offSignature = 60;
   static const int _offPayload = 124;
 
-  // ── 생성자 ───────────────────────────────────────────────
+  // ── Constructor ──────────────────────────────────────────
 
   MeshPacket({
     this.protocolVersion = currentProtocolVersion,
@@ -116,10 +116,10 @@ class MeshPacket {
          'payload exceeds max size ($maxPayloadSize bytes)',
        );
 
-  // ── 팩토리 ───────────────────────────────────────────────
+  // ── Factory ───────────────────────────────────────────────
 
-  /// 새 패킷을 생성한다. [msgId]와 [timestamp]는 자동 생성.
-  /// [signature]는 초기값으로 64 bytes 0으로 채워진다 (서명 전 상태).
+  /// Creates a new packet. [msgId] and [timestamp] are generated automatically.
+  /// [signature] is initially filled with 64 zero bytes (pre-signing placeholder).
   factory MeshPacket.create({
     required Uint8List senderId,
     required Uint8List targetId,
@@ -135,32 +135,32 @@ class MeshPacket {
       ttl: ttl,
       hopCount: 0,
       timestamp: DateTime.now().millisecondsSinceEpoch,
-      signature: Uint8List(64), // 서명 전 placeholder
+      signature: Uint8List(64), // pre-signing placeholder
       payload: payload,
     );
   }
 
-  // ── 직렬화 ───────────────────────────────────────────────
+  // ── Serialization ────────────────────────────────────────
 
-  /// 서명 대상 바이트열을 반환한다.
+  /// Returns the bytes to be signed.
   ///
-  /// **ttl과 hop_count는 서명 대상에서 제외한다.**
-  /// 릴레이 노드가 ttl/hop_count를 변경해도 서명이 유효하게 유지되어야 하기 때문이다.
-  /// 서명 생성/검증 양쪽에서 이 메서드를 동일하게 사용한다.
+  /// **ttl and hop_count are excluded from the signed data.**
+  /// The signature must remain valid even when relay nodes modify ttl/hop_count.
+  /// This method is used identically for both signing and verification.
   ///
-  /// 레이아웃:
+  /// Layout:
   /// ```
   ///  0      protocol_version
   ///  1-16   msg_id
   /// 17-32   sender_id
   /// 33-48   target_id
   /// 49      msg_type
-  /// 50-57   timestamp (big-endian int64)  ← ttl/hopCount 건너뜀
+  /// 50-57   timestamp (big-endian int64)  ← ttl/hopCount skipped
   /// 58-...  payload
   /// ```
   Uint8List toSignableBytes() {
     // version(1) + msg_id(16) + sender_id(16) + target_id(16) + msg_type(1) + timestamp(8) + payload
-    // ttl(1)과 hop_count(1)는 릴레이 중 변경되므로 서명 대상에서 제외
+    // ttl(1) and hop_count(1) are excluded because they change during relay
     const signableHeaderSize = 58; // 1+16+16+16+1+8
     final buf = Uint8List(signableHeaderSize + payload.length);
     final bd = ByteData.sublistView(buf);
@@ -170,7 +170,7 @@ class MeshPacket {
     buf.setRange(17, 33, senderId);
     buf.setRange(33, 49, targetId);
     bd.setUint8(49, msgType.value);
-    bd.setInt64(50, timestamp, Endian.big); // ttl·hopCount 건너뜀
+    bd.setInt64(50, timestamp, Endian.big); // ttl·hopCount skipped
     buf.setRange(
       signableHeaderSize,
       signableHeaderSize + payload.length,
@@ -180,9 +180,9 @@ class MeshPacket {
     return buf;
   }
 
-  /// 전체 패킷을 바이트열로 직렬화한다 (signature 포함).
+  /// Serializes the entire packet to bytes (including signature).
   ///
-  /// 전송 직전에 호출한다. signature가 설정되어 있어야 한다.
+  /// Call this immediately before sending. The signature must already be set.
   Uint8List toBytes() {
     final buf = Uint8List(headerSize + payload.length);
     final bd = ByteData.sublistView(buf);
@@ -201,16 +201,16 @@ class MeshPacket {
     return buf;
   }
 
-  // ── 역직렬화 ─────────────────────────────────────────────
+  // ── Deserialization ──────────────────────────────────────
 
-  /// 바이트열에서 [MeshPacket]을 복원한다.
+  /// Restores a [MeshPacket] from bytes.
   ///
-  /// 파싱에 실패하면 null을 반환한다 (예외를 던지지 않음).
-  /// 실패 조건:
-  /// - 길이가 headerSize(124) bytes 미만
-  /// - payload 길이가 maxPayloadSize(4096) bytes 초과
-  /// - 지원하지 않는 protocol_version
-  /// - 알 수 없는 msg_type 값
+  /// Returns null on parse failure (does not throw exceptions).
+  /// Failure conditions:
+  /// - length less than headerSize (124) bytes
+  /// - payload length exceeds maxPayloadSize (4096) bytes
+  /// - unsupported protocol_version
+  /// - unknown msg_type value
   static MeshPacket? fromBytes(Uint8List bytes) {
     if (bytes.length < headerSize) return null;
 
@@ -254,13 +254,13 @@ class MeshPacket {
     );
   }
 
-  // ── 유틸 ────────────────────────────────────────────────
+  // ── Utilities ───────────────────────────────────────────
 
-  /// UUID v4 형식의 16 bytes msg_id를 생성한다.
+  /// Generates a 16-byte UUID v4 msg_id.
   ///
-  /// RFC 4122 Section 4.4 준수:
-  /// - byte[6] 상위 4 bits = 0100 (version 4)
-  /// - byte[8] 상위 2 bits = 10   (variant 1)
+  /// Compliant with RFC 4122 Section 4.4:
+  /// - byte[6] upper 4 bits = 0100 (version 4)
+  /// - byte[8] upper 2 bits = 10   (variant 1)
   static Uint8List generateMsgId() {
     final rng = Random.secure();
     final id = Uint8List(16);
@@ -274,7 +274,7 @@ class MeshPacket {
     return id;
   }
 
-  /// 이 패킷이 브로드캐스트 패킷인지 확인한다.
+  /// Returns whether this packet is a broadcast packet.
   bool get isBroadcast {
     for (var i = 0; i < 16; i++) {
       if (targetId[i] != 0xFF) return false;
@@ -282,7 +282,7 @@ class MeshPacket {
     return true;
   }
 
-  // ── 디버그 ───────────────────────────────────────────────
+  // ── Debug ────────────────────────────────────────────────
 
   @override
   String toString() {

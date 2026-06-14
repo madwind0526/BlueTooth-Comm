@@ -1,6 +1,6 @@
-/// 컴파일 타임 진단 설정.
+/// Compile-time diagnostic configuration.
 ///
-/// 일반 빌드에서는 모두 기본값이므로 앱 동작에 영향을 주지 않는다.
+/// All values default in normal builds, so they do not affect app behavior.
 class DiagnosticConfig {
   DiagnosticConfig._();
 
