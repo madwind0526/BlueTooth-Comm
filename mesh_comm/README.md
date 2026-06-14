@@ -1,17 +1,29 @@
-# mesh_comm
+# MeshComm Flutter App
 
-A new Flutter project.
+This folder contains the Flutter application for MeshComm.
 
-## Getting Started
+For the full project overview, first-run guide, app usage, menu descriptions, security notes, and troubleshooting, see the root README:
 
-This project is a starting point for a Flutter application.
+```text
+../README.md
+```
 
-A few resources to get you started if this is your first Flutter project:
+## Common Commands
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Run these commands from this `mesh_comm` directory.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d windows
+flutter run -d android
+flutter build apk
+flutter build windows
+```
+
+## Notes
+
+- Android devices can act as BLE peripheral and central nodes.
+- Windows currently acts as a central/client node and may require manual Bluetooth pairing with Android devices.
+- Identity backup/restore, contact setup, SCAN usage, and role/security guidance are documented in the root README.
