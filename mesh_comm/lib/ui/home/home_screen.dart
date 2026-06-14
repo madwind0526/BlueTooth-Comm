@@ -678,8 +678,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    if (!_bluetoothEnabled) {
-      _showMessage('Bluetooth를 먼저 켜주세요.');
+    if (!_bluetoothEnabled && !_lanEnabled) {
+      _showMessage('Bluetooth나 WiFi를 먼저 켜주세요.');
       return;
     }
     await _contactService.cleanupStaleContacts(
@@ -696,7 +696,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _activeTopologyRequestId = null;
       _topologyResponses.clear();
     });
-    await _bleService.startScan();
+    // BLE scan only when Bluetooth is on; LAN-only mode skips BLE scan.
+    if (_bluetoothEnabled) await _bleService.startScan();
     await MessagingService().broadcastKeyAnnounce();
     final scanDepth =
         int.tryParse(_scanDepthController.text.trim()) ??
@@ -716,15 +717,17 @@ class _HomeScreenState extends State<HomeScreen> {
     Future<void>.delayed(const Duration(seconds: 10), () {
       if (mounted) setState(() => _isScanning = false);
     });
-    // Restart LAN after BLE scan: scan can reset WiFi stack causing 0 peers.
-    // Stop → 500ms delay → start reconnects dropped TCP sessions automatically.
-    unawaited(
-      Future<void>.delayed(const Duration(milliseconds: 1500), () async {
-        await MessagingService().stopLan();
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        await MessagingService().startLan();
-      }),
-    );
+    // Restart LAN after scan to reconnect dropped TCP sessions.
+    // Only runs when LAN is enabled; skip if user turned LAN off.
+    if (_lanEnabled) {
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 1500), () async {
+          await MessagingService().stopLan();
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          await MessagingService().startLan();
+        }),
+      );
+    }
   }
 
   void _syncDemoTopology(bool enabled) {

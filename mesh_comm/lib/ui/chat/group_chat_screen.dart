@@ -331,6 +331,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         sendCount++;
       }
     }
+    if (!mounted) return;
     if (sendCount > 0) {
       debugPrint('[GroupChat] deliveryStatus: ${file.name} total=$sendCount');
       setState(() => _deliveryStatus[file.name] = (received: 0, total: sendCount));
@@ -384,6 +385,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         sendCount++;
       }
     }
+    if (!mounted) return;
     if (sendCount > 0) {
       debugPrint('[GroupChat] deliveryStatus: ${file.name} total=$sendCount');
       setState(() => _deliveryStatus[file.name] = (received: 0, total: sendCount));

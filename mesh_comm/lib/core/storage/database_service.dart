@@ -19,7 +19,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   static const String _dbFileName = 'mesh_comm.db';
-  static const int _dbVersion = 11;
+  static const int _dbVersion = 12;
 
   Database? _db;
 
@@ -129,6 +129,12 @@ class DatabaseService {
 
     await db.execute(
       'CREATE INDEX idx_messages_expires_at ON messages (expires_at)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_messages_sender_target_ts ON messages (sender_id, target_id, timestamp)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_messages_target_sender_ts ON messages (target_id, sender_id, timestamp)',
     );
 
     await db.execute(
@@ -290,6 +296,15 @@ class DatabaseService {
     if (oldVersion < 11) {
       await db.execute(
         'ALTER TABLE group_messages ADD COLUMN expires_at INTEGER',
+      );
+    }
+    if (oldVersion < 12) {
+      // Speed up chat history queries: lookup by contact pair + time order.
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_messages_sender_target_ts ON messages (sender_id, target_id, timestamp)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_messages_target_sender_ts ON messages (target_id, sender_id, timestamp)',
       );
     }
   }
