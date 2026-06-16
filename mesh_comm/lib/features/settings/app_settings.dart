@@ -34,6 +34,7 @@ class AppSettings {
   final int scanDefaultDepth;
   final int lastShortNoticeAt;
   final int lastLongNoticeAt;
+  final int lastFullScanAt;
 
   const AppSettings({
     this.darkMode = true,
@@ -45,6 +46,7 @@ class AppSettings {
     this.scanDefaultDepth = 3,
     this.lastShortNoticeAt = 0,
     this.lastLongNoticeAt = 0,
+    this.lastFullScanAt = 0,
   });
 
   AppSettings copyWith({
@@ -57,6 +59,7 @@ class AppSettings {
     int? scanDefaultDepth,
     int? lastShortNoticeAt,
     int? lastLongNoticeAt,
+    int? lastFullScanAt,
   }) {
     return AppSettings(
       darkMode: darkMode ?? this.darkMode,
@@ -68,6 +71,7 @@ class AppSettings {
       scanDefaultDepth: scanDefaultDepth ?? this.scanDefaultDepth,
       lastShortNoticeAt: lastShortNoticeAt ?? this.lastShortNoticeAt,
       lastLongNoticeAt: lastLongNoticeAt ?? this.lastLongNoticeAt,
+      lastFullScanAt: lastFullScanAt ?? this.lastFullScanAt,
     );
   }
 
@@ -84,6 +88,7 @@ class AppSettings {
       lastShortNoticeAt:
           int.tryParse(values['last_short_notice_at'] ?? '') ?? 0,
       lastLongNoticeAt: int.tryParse(values['last_long_notice_at'] ?? '') ?? 0,
+      lastFullScanAt: int.tryParse(values['last_full_scan_at'] ?? '') ?? 0,
     );
   }
 
@@ -98,6 +103,7 @@ class AppSettings {
       'scan_default_depth': scanDefaultDepth.toString(),
       'last_short_notice_at': lastShortNoticeAt.toString(),
       'last_long_notice_at': lastLongNoticeAt.toString(),
+      'last_full_scan_at': lastFullScanAt.toString(),
     };
   }
 

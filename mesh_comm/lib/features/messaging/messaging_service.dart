@@ -191,6 +191,9 @@ class MessagingService {
   /// 현재 연결된 LAN 피어 수.
   int get lanConnectedCount => _lan.connectedCount;
 
+  /// Current connected LAN peer node-ID hex list (snapshot, not a stream).
+  List<String> get connectedLanPeerIds => _lan.connectedPeerIds;
+
   /// LAN 피어 목록 변경 스트림 (UI 업데이트용).
   Stream<List<String>> get lanPeersStream => _lan.connectedPeersStream;
 

@@ -702,8 +702,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final scanDepth =
         int.tryParse(_scanDepthController.text.trim()) ??
         _settings.scanDefaultDepth;
+    final limitedDepth = _limitedScanDepth(scanDepth);
+
+    // Record full-scan usage for user-level 24h cooldown
+    final isRestrictedLevel =
+        _settings.userLevel == UserLevel.user ||
+        _settings.userLevel == UserLevel.server;
+    if (isRestrictedLevel && scanDepth == -1 && limitedDepth == -1) {
+      final updated = _settings.copyWith(
+        lastFullScanAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      await AppSettingsService().save(updated);
+      if (mounted) setState(() => _settings = updated);
+    }
+
     final requestId = await MessagingService().requestTopologyScan(
-      depth: _limitedScanDepth(scanDepth),
+      depth: limitedDepth,
     );
     if (mounted && requestId != null) {
       setState(() => _activeTopologyRequestId = requestId);
@@ -714,20 +728,24 @@ class _HomeScreenState extends State<HomeScreen> {
         () => MessagingService().broadcastKeyAnnounce(),
       ),
     );
-    Future<void>.delayed(const Duration(seconds: 10), () {
-      if (mounted) setState(() => _isScanning = false);
-    });
-    // Restart LAN after scan to reconnect dropped TCP sessions.
-    // Only runs when LAN is enabled; skip if user turned LAN off.
-    if (_lanEnabled) {
-      unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 1500), () async {
+    // Restart transports immediately when scan ends (10s).
+    // BLE scan disrupts WiFi for the full 10s; earlier restart was ineffective.
+    unawaited(
+      Future<void>.delayed(const Duration(seconds: 10), () async {
+        if (!mounted) return;
+        setState(() => _isScanning = false);
+        if (_lanEnabled) {
           await MessagingService().stopLan();
           await Future<void>.delayed(const Duration(milliseconds: 500));
           await MessagingService().startLan();
-        }),
-      );
-    }
+        }
+        if (_bluetoothEnabled && Platform.isAndroid) {
+          await _bleService.stopAdvertising();
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          await _bleService.startAdvertising();
+        }
+      }),
+    );
   }
 
   void _syncDemoTopology(bool enabled) {
@@ -2628,6 +2646,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ? _demoTopologyResponses
         : _topologyResponses.values.toList();
 
+    final isUserRestricted =
+        _settings.userLevel == UserLevel.user ||
+        _settings.userLevel == UserLevel.server;
+    final fullScanCooldown =
+        parsedDepth == -1 && !demoMode && isUserRestricted
+        ? _fullScanCooldownStr()
+        : null;
+    // Block SCAN START if depth=-1 and cooldown is still active for user level.
+    final fullScanBlocked = parsedDepth == -1 && !demoMode && isUserRestricted && fullScanCooldown != null;
+
     return Column(
       children: [
         Padding(
@@ -2641,13 +2669,28 @@ class _HomeScreenState extends State<HomeScreen> {
                   height: 40,
                   child: _ScanStartButton(
                     isScanning: _isScanning,
-                    onPressed: _isScanning ? null : _runScan,
+                    onPressed: (_isScanning || fullScanBlocked) ? null : _runScan,
                   ),
                 ),
               );
             },
           ),
         ),
+        if (parsedDepth == -1 && !demoMode && isUserRestricted) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              fullScanCooldown ?? '전체 탐색 가능 (24시간에 1회)',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                color: fullScanCooldown != null
+                    ? const Color(0xFFFF9800)
+                    : const Color(0xFF4CAF50),
+              ),
+            ),
+          ),
+        ],
         Expanded(
           child: _ScanTreePreview(
             contacts: visibleContacts,
@@ -2672,14 +2715,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   int _limitedScanDepth(int depth) {
-    final limit =
+    final isRestricted =
         _settings.userLevel == UserLevel.user ||
-            _settings.userLevel == UserLevel.server
-        ? 3
-        : null;
-    if (limit == null) return depth;
-    if (depth == -1) return limit;
-    return depth > limit ? limit : depth;
+        _settings.userLevel == UserLevel.server;
+    if (!isRestricted) return depth; // creator/builder/admin: no limit
+
+    if (depth == -1) {
+      // Allow full scan once per 24h for user/server level
+      final last = _settings.lastFullScanAt;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (last <= 0 || now - last >= const Duration(hours: 24).inMilliseconds) {
+        return depth; // cooldown expired — full scan allowed
+      }
+      return 3; // cooldown active — cap to normal limit
+    }
+    return depth > 3 ? 3 : depth;
+  }
+
+  // Returns remaining cooldown string for user-level full scan (-1 depth), or null if available.
+  String? _fullScanCooldownStr() {
+    final isRestricted =
+        _settings.userLevel == UserLevel.user ||
+        _settings.userLevel == UserLevel.server;
+    if (!isRestricted) return null;
+    final last = _settings.lastFullScanAt;
+    if (last <= 0) return null;
+    final remaining =
+        const Duration(hours: 24).inMilliseconds -
+        (DateTime.now().millisecondsSinceEpoch - last);
+    if (remaining <= 0) return null;
+    final hours = remaining ~/ 3600000;
+    final mins = (remaining % 3600000) ~/ 60000;
+    return '전체 탐색 쿨다운: ${hours}h ${mins}m 후 가능';
   }
 
   List<Contact> _scanVisibleContacts() {
@@ -4557,56 +4624,139 @@ class _ScanDepthBox extends StatelessWidget {
 
   const _ScanDepthBox({required this.controller});
 
+  void _showInputDialog(BuildContext context) {
+    final tmp = TextEditingController(text: controller.text);
+
+    // Compute cooldown for user/server level to show in dialog
+    final settings = AppSettingsService().current;
+    final isRestricted =
+        settings.userLevel == UserLevel.user ||
+        settings.userLevel == UserLevel.server;
+    String? cooldownStr;
+    if (isRestricted) {
+      final last = settings.lastFullScanAt;
+      if (last > 0) {
+        final remaining =
+            const Duration(hours: 24).inMilliseconds -
+            (DateTime.now().millisecondsSinceEpoch - last);
+        if (remaining > 0) {
+          final hours = remaining ~/ 3600000;
+          final mins = (remaining % 3600000) ~/ 60000;
+          cooldownStr = '쿨다운: ${hours}h ${mins}m 후 가능';
+        }
+      }
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Scan Depth'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: tmp,
+              keyboardType: const TextInputType.numberWithOptions(signed: true),
+              autofocus: true,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'^-?\d*')),
+              ],
+              decoration: const InputDecoration(
+                hintText: '1–10, 또는 -1 (전체 탐색)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              '-1 : 전체 네트워크 탐색 (1회/24h)',
+              style: TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            if (cooldownStr != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                cooldownStr,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFFFF9800),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () {
+              controller.text = tmp.text;
+              Navigator.pop(ctx);
+            },
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(210),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(110)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Depth',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
+    return GestureDetector(
+      onTap: () => _showInputDialog(context),
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, _) {
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withAlpha(210),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(110)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Depth',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(165),
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(80),
+                      ),
+                    ),
+                    child: SizedBox(
+                      width: 42,
+                      height: 34,
+                      child: Center(
+                        child: Text(
+                          value.text.isEmpty ? '3' : value.text,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleSmall?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 5),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black.withAlpha(165),
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-              ),
-              child: SizedBox(
-                width: 42,
-                height: 34,
-                child: TextField(
-                  controller: controller,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  textAlignVertical: TextAlignVertical.center,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  decoration: const InputDecoration(
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                    isDense: true,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -5861,7 +6011,7 @@ class _ConnectionBadge extends StatelessWidget {
       builder: (context, bleSnap) {
         return StreamBuilder<List<String>>(
           stream: messagingService.lanPeersStream,
-          initialData: const [],
+          initialData: messagingService.connectedLanPeerIds,
           builder: (context, lanSnap) {
             final bleCount = bluetoothEnabled
                 ? (bleSnap.data?.length ?? 0)
