@@ -486,7 +486,10 @@ class BleService {
       // nodeId = null on parse failure
     }
 
-    // Identify MeshComm devices: by serviceUuid or localName
+    // Identify MeshComm devices: by serviceUuid (primary) or localName (fallback).
+    // nodeId from manufacturerData is extracted for routing but NOT used as a
+    // connection gate — 0xFFFF is a generic dev manufacturer ID shared by many
+    // unrelated BLE devices, causing false-positive connection attempts.
     final serviceUuids = result.advertisementData.serviceUuids
         .map((g) => g.str128.toLowerCase())
         .toList();
@@ -495,18 +498,17 @@ class BleService {
       (u) => u == BleConstants.serviceUuid.toLowerCase(),
     );
     final hasMeshName = localName == 'MeshComm';
-    final hasMeshNodeId = nodeId != null;
 
-    // [DIAG-BLE] Windows에서 광고 데이터 상세 로그
-    if (Platform.isWindows && (hasMeshService || hasMeshName || hasMeshNodeId || localName.isNotEmpty)) {
+    // [DIAG-BLE] Windows detailed advertisement log
+    if (Platform.isWindows && (hasMeshService || hasMeshName || localName.isNotEmpty)) {
       _log('[DIAG-BLE-WIN] device=$deviceId name="$localName" '
-          'svcUuids=$serviceUuids hasSvc=$hasMeshService hasName=$hasMeshName hasNodeId=$hasMeshNodeId');
+          'svcUuids=$serviceUuids hasSvc=$hasMeshService hasName=$hasMeshName hasNodeId=${nodeId != null}');
     }
 
-    if (!hasMeshService && !hasMeshName && !hasMeshNodeId) {
-      return; // Ignore non-MeshComm devices
+    if (!hasMeshService && !hasMeshName) {
+      return; // Not a MeshComm device — skip
     }
-    _log('MeshComm device found: $deviceId (rssi: $rssi, name: $localName)');
+    _log('MeshComm device found: $deviceId (rssi: $rssi, name: $localName, nodeId: ${nodeId != null})');
 
     // Skip already connected devices
     if (_connectedDevices.containsKey(deviceId) ||
