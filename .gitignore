@@ -41,3 +41,4 @@ mesh_comm/s26_*
 
 # Claude session
 .claude/
+memory-bank/
