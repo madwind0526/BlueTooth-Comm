@@ -1,0 +1,721 @@
+--------- beginning of main
+06-07 22:31:50.707 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:31:50.739 12758 12758 I flutter : [BleService] Scan started
+06-07 22:31:51.120 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:31:55.548 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:31:55.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): c3490178
+06-07 22:31:55.612 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:31:55.612 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:31:55.612 12758 12758 I flutter : [MessagingService] DROP(TTL=0): bea41253
+06-07 22:31:55.698 12758 12758 I flutter : [LanService] Incoming TCP from 192.168.0.40:62169
+06-07 22:31:55.728 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): eb575296
+06-07 22:31:55.728 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:31:55.771 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:31:55.771 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 43be6a11
+06-07 22:32:00.740 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:32:05.467 12758 12758 I flutter : [MessagingService] [DIAG-RX] fileHeader 도착: forMe=true sender=14e75929
+06-07 22:32:05.468 12758 12758 I flutter : [TransferService] [DIAG-RX] fileHeader: tid=bef944ce3ad4a7a3 file=Screenshot_20260604_163449_Tesla.jpg chunks=151
+06-07 22:32:05.468 12758 12758 I flutter : [TransferService] [DIAG-RX] ACK(-1) 발송 시작
+06-07 22:32:15.744 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:32:15.763 12758 12758 I flutter : [BleService] Scan started
+06-07 22:32:15.893 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:32:25.537 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:32:25.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 6a82f634
+06-07 22:32:25.612 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:32:25.613 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:32:25.613 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 5a2143d4
+06-07 22:32:25.732 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 5518664d
+06-07 22:32:25.732 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:32:25.768 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:32:25.789 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:32:25.789 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 9c9a9af6
+06-07 22:32:40.771 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:32:40.789 12758 12758 I flutter : [BleService] Scan started
+06-07 22:32:40.900 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:32:50.792 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:32:55.544 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:32:55.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 1905fb69
+06-07 22:32:55.612 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:32:55.612 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:32:55.612 12758 12758 I flutter : [MessagingService] DROP(TTL=0): b7accee3
+06-07 22:32:55.769 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 8cad23b3
+06-07 22:32:55.769 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:32:55.787 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:32:55.787 12758 12758 I flutter : [MessagingService] DROP(TTL=0): c7b5978a
+06-07 22:33:05.797 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:33:05.825 12758 12758 I flutter : [BleService] Scan started
+06-07 22:33:06.400 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:33:15.828 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:33:25.553 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:33:25.641 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 84ce7458
+06-07 22:33:25.641 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:33:25.642 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:33:25.642 12758 12758 I flutter : [MessagingService] DROP(TTL=0): fe3673d8
+06-07 22:33:25.757 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 5d38b790
+06-07 22:33:25.758 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:33:25.808 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:33:25.808 12758 12758 I flutter : [MessagingService] DROP(TTL=0): f4ff6bd7
+06-07 22:33:30.833 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:33:30.863 12758 12758 I flutter : [BleService] Scan started
+06-07 22:33:30.915 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:33:40.866 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:33:55.557 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:33:55.640 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 10a3cb52
+06-07 22:33:55.640 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:33:55.640 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:33:55.640 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 8c034745
+06-07 22:33:55.769 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 46c42825
+06-07 22:33:55.769 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:33:55.784 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:33:55.785 12758 12758 I flutter : [MessagingService] DROP(TTL=0): f026cc47
+06-07 22:33:55.870 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:33:55.887 12758 12758 I flutter : [BleService] Scan started
+06-07 22:33:55.992 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:34:05.889 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:34:20.893 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:34:20.914 12758 12758 I flutter : [BleService] Scan started
+06-07 22:34:21.024 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:34:25.551 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:34:25.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 075054c1
+06-07 22:34:25.613 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:34:25.613 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:34:25.613 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 9ed165e2
+06-07 22:34:25.765 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 598324e0
+06-07 22:34:25.765 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:34:25.804 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:34:25.804 12758 12758 I flutter : [MessagingService] DROP(TTL=0): bed1d1cd
+06-07 22:34:30.916 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:34:45.919 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:34:45.936 12758 12758 I flutter : [BleService] Scan started
+06-07 22:34:46.160 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:34:55.556 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:34:55.640 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 717d443f
+06-07 22:34:55.640 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:34:55.640 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:34:55.640 12758 12758 I flutter : [MessagingService] DROP(TTL=0): e04c3685
+06-07 22:34:55.760 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): c7601e47
+06-07 22:34:55.761 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:34:55.777 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:34:55.777 12758 12758 I flutter : [MessagingService] DROP(TTL=0): d8a6dfbd
+06-07 22:34:55.938 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:35:08.998 12758 12758 E flutter : [ERROR:flutter/lib/ui/window/platform_configuration.cc(448)] Reported frame time is older than the last one; clamping. 419499113 < 419499433 ~= 320
+06-07 22:35:10.941 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:35:10.952 12758 12758 I flutter : [BleService] Scan started
+06-07 22:35:11.255 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:35:20.955 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:35:25.537 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:35:25.608 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 25d03997
+06-07 22:35:25.608 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:35:25.608 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:35:25.608 12758 12758 I flutter : [MessagingService] DROP(TTL=0): cbd0abb6
+06-07 22:35:25.763 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 719d40df
+06-07 22:35:25.763 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:35:25.799 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:35:25.799 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 7223e705
+06-07 22:35:35.958 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:35:35.985 12758 12758 I flutter : [BleService] Scan started
+06-07 22:35:36.092 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:35:45.987 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:35:55.542 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:35:55.613 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 9a4c417d
+06-07 22:35:55.613 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:35:55.613 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:35:55.613 12758 12758 I flutter : [MessagingService] DROP(TTL=0): ea93ebc9
+06-07 22:35:55.761 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 8c09a060
+06-07 22:35:55.761 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:35:55.814 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:35:55.814 12758 12758 I flutter : [MessagingService] DROP(TTL=0): f8243496
+06-07 22:36:00.991 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:36:01.015 12758 12758 I flutter : [BleService] Scan started
+06-07 22:36:01.252 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -36, name: MeshComm)
+06-07 22:36:11.020 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:36:25.558 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:36:25.634 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:36:25.635 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:36:25.637 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): bfc65be5
+06-07 22:36:25.637 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:25.637 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:36:25.637 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 303b341b
+06-07 22:36:25.641 12758 12758 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:36:25.700 12758 12758 I flutter : [BleService] sendPacket: 405 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:25.700 12758 12758 I flutter : [MessagingService] RELAY: type=MsgType.keyAnnounce sender=14e75929 target=ffffffff hop=1 ttl=6 neighbors=1
+06-07 22:36:25.704 12758 12758 I flutter : [MessagingService] DROP(중복): 97ccaf03
+06-07 22:36:25.714 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): d3aa30af
+06-07 22:36:25.729 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): d3aa30af
+06-07 22:36:25.756 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 1a2376fc
+06-07 22:36:25.756 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:25.806 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:36:25.806 12758 12758 I flutter : [MessagingService] DROP(TTL=0): c94b554c
+06-07 22:36:25.818 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): d3aa30af
+06-07 22:36:25.818 12758 12758 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:25.818 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:36:26.022 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:36:26.036 12758 12758 I flutter : [BleService] Scan started
+06-07 22:36:26.361 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -36, name: MeshComm)
+06-07 22:36:32.118 12758 12758 I flutter : [LanService] Peer registered via incoming: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:36:32.129 12758 12758 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:36:32.142 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=c26ceb0e result=TrustChangeResult.unchanged
+06-07 22:36:32.152 12758 12758 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:36:32.175 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): a5e38df7
+06-07 22:36:32.194 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:36:32.196 12758 12758 I flutter : [MessagingService] DROP(중복): 8823b0aa
+06-07 22:36:32.196 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=c26ceb0e result=TrustChangeResult.unchanged
+06-07 22:36:32.210 12758 12758 I flutter : [MessagingService] DROP(중복): cbf14d27
+06-07 22:36:32.236 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): a5e38df7
+06-07 22:36:32.236 12758 12758 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:32.236 12758 12758 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:36:32.253 12758 12758 I flutter : [MessagingService] DROP(중복): 7959defe
+06-07 22:36:32.301 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): a5e38df7
+06-07 22:36:32.329 12758 12758 I flutter : [BleService] sendPacket: 405 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:32.329 12758 12758 I flutter : [MessagingService] RELAY: type=MsgType.keyAnnounce sender=14e75929 target=ffffffff hop=1 ttl=6 neighbors=1
+06-07 22:36:32.334 12758 12758 I flutter : [MessagingService] DROP(중복): cbf14d27
+06-07 22:36:32.402 12758 12758 I flutter : [MessagingService] DROP(중복): 8823b0aa
+06-07 22:36:32.418 12758 12758 I flutter : [BleService] sendPacket: 397 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:32.418 12758 12758 I flutter : [MessagingService] RELAY: type=MsgType.keyAnnounce sender=c26ceb0e target=ffffffff hop=1 ttl=6 neighbors=1
+06-07 22:36:32.422 12758 12758 I flutter : [MessagingService] DROP(중복): 8823b0aa
+06-07 22:36:32.508 12758 12758 I flutter : [MessagingService] DROP(중복): 7959defe
+06-07 22:36:32.509 12758 12758 I flutter : [BleService] sendPacket: 397 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:32.509 12758 12758 I flutter : [MessagingService] RELAY: type=MsgType.keyAnnounce sender=c26ceb0e target=ffffffff hop=1 ttl=6 neighbors=1
+06-07 22:36:32.511 12758 12758 I flutter : [MessagingService] DROP(중복): 7959defe
+06-07 22:36:36.040 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:36:51.042 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:36:51.048 12758 12758 I flutter : [BleService] Scan started
+06-07 22:36:51.155 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -43, name: MeshComm)
+06-07 22:36:55.557 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:36:55.638 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 3763f6bf
+06-07 22:36:55.638 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:55.638 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:36:55.638 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 80c5feb6
+06-07 22:36:55.696 12758 12758 I flutter : [LanService] Incoming TCP from 192.168.0.40:49267
+06-07 22:36:55.762 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 4a8ec999
+06-07 22:36:55.762 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:36:55.780 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:36:55.781 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 5c77236a
+06-07 22:37:01.052 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:37:02.146 12758 12758 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:37:07.953 12758 12758 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: 14e7592991b4536f37e373f227f4c1ed
+06-07 22:37:08.853 12758 12758 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:37:16.055 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:37:16.073 12758 12758 I flutter : [BleService] Scan started
+06-07 22:37:16.210 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:37:25.548 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:37:25.608 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): bcb17541
+06-07 22:37:25.608 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:37:25.608 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:37:25.608 12758 12758 I flutter : [MessagingService] DROP(TTL=0): dddf8ebc
+06-07 22:37:25.726 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): a89fa93e
+06-07 22:37:25.726 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:37:25.772 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:37:25.772 12758 12758 I flutter : [MessagingService] DROP(TTL=0): d3952a8b
+06-07 22:37:26.075 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:37:41.079 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:37:41.100 12758 12758 I flutter : [BleService] Scan started
+06-07 22:37:41.214 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:37:51.103 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:37:55.550 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:37:55.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): f8a30ad7
+06-07 22:37:55.612 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:37:55.612 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:37:55.612 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 0d77596a
+06-07 22:37:55.731 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 89a5b8ff
+06-07 22:37:55.731 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:37:55.783 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:37:55.783 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 88afc1a3
+06-07 22:38:06.058 12758 12758 I flutter : [MessagingService] [DIAG-RX] fileHeader 도착: forMe=true sender=14e75929
+06-07 22:38:06.058 12758 12758 I flutter : [TransferService] [DIAG-RX] fileHeader: tid=b079a263220ef110 file=Screenshot_20260604_163449_Tesla.jpg chunks=1590
+06-07 22:38:06.058 12758 12758 I flutter : [TransferService] [DIAG-RX] ACK(-1) 발송 시작
+06-07 22:38:06.105 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:38:06.123 12758 12758 I flutter : [BleService] Scan started
+06-07 22:38:06.136 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): ef35335f
+06-07 22:38:06.136 12758 12758 I flutter : [BleService] sendPacket: 171 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:38:06.188 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -35, name: MeshComm)
+06-07 22:38:16.124 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:38:25.549 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:38:25.610 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 6ef21647
+06-07 22:38:25.610 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:38:25.610 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:38:25.610 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 3a279ccc
+06-07 22:38:25.761 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 6a953dcc
+06-07 22:38:25.761 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:38:25.805 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:38:25.805 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 6a9d24b8
+06-07 22:38:31.129 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:38:31.148 12758 12758 I flutter : [BleService] Scan started
+06-07 22:38:31.200 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -35, name: MeshComm)
+06-07 22:38:41.150 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:38:55.541 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:38:55.616 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 5d0069c5
+06-07 22:38:55.616 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:38:55.616 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:38:55.616 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 5ac550e0
+06-07 22:38:55.733 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 6d0242b5
+06-07 22:38:55.733 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:38:55.787 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:38:55.787 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 42b51b0c
+06-07 22:38:56.158 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:38:56.166 12758 12758 I flutter : [BleService] Scan started
+06-07 22:38:56.291 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -33, name: MeshComm)
+06-07 22:39:06.168 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:39:15.408 12758 12758 I flutter : [LanService] TCP server listening on port 7655
+06-07 22:39:15.408 12758 12758 I flutter : [LanService] UDP socket bound on port 7654
+06-07 22:39:18.947 12758 12758 I flutter : [LanService] Connected to 14e7592991b4536f37e373f227f4c1ed at 192.168.0.44
+06-07 22:39:21.171 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:39:21.198 12758 12758 I flutter : [BleService] Scan started
+06-07 22:39:21.297 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -33, name: MeshComm)
+06-07 22:39:25.543 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:39:25.612 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 0d159c27
+06-07 22:39:25.612 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:39:25.612 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:39:25.612 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 7cf71afc
+06-07 22:39:25.728 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 5f11b0db
+06-07 22:39:25.728 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:39:25.774 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:39:25.774 12758 12758 I flutter : [MessagingService] DROP(TTL=0): b02bf0e1
+06-07 22:39:31.200 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:39:32.157 12758 12758 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:39:46.202 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:39:46.209 12758 12758 I flutter : [BleService] Scan started
+06-07 22:39:46.433 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:39:50.104 12758 12758 I flutter : [MessagingService] [DIAG-TX] sendFile 요청: target=c26ceb0e isLAN=true isBLE=true isDirect=true
+06-07 22:39:50.104 12758 12758 I flutter : [MessagingService] [DIAG-TX] sendFile chunkSize=4000 (LAN=true)
+06-07 22:39:50.104 12758 12758 I flutter : [TransferService] [DIAG-TX] sendFile: tid=bf813a79 file=20260602_233606.jpg size=2551725 chunks=638 chunkSize=4000
+06-07 22:39:50.167 12758 12758 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:39:55.551 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:39:55.613 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): 98d353e0
+06-07 22:39:55.613 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:39:55.613 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:39:55.613 12758 12758 I flutter : [MessagingService] DROP(TTL=0): d40cb5f7
+06-07 22:39:55.733 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): ae8fad28
+06-07 22:39:55.734 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:39:55.791 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:39:55.791 12758 12758 I flutter : [MessagingService] DROP(TTL=0): d9d543b7
+06-07 22:39:56.213 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:40:02.161 12758 12758 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:40:11.217 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:40:11.238 12758 12758 I flutter : [BleService] Scan started
+06-07 22:40:11.392 12758 12758 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:40:21.240 12758 12758 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:40:25.549 12758 12758 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:40:25.611 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): e4ed259a
+06-07 22:40:25.611 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:40:25.612 12758 12758 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:40:25.612 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 24624e8b
+06-07 22:40:25.757 12758 12758 I flutter : [MessagingService] DROP(자체 패킷 echo): c4bdc70b
+06-07 22:40:25.757 12758 12758 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:40:25.804 12758 12758 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:40:25.804 12758 12758 I flutter : [MessagingService] DROP(TTL=0): 9469f867
+06-07 22:40:35.182 12758 12758 I flutter : [BleService] Peripheral central disconnected: 41:37:E8:EE:5A:3A
+06-07 22:40:35.197 12758 12758 I flutter : [BleService] Device disconnected: 41:37:E8:EE:5A:3A
+06-07 22:40:36.242 12758 12758 I flutter : [FBP] stopScan: already stopped
+06-07 22:40:36.253 12758 12758 I flutter : [BleService] Scan started
+06-07 22:40:41.547 14768 14803 I flutter : [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
+06-07 22:40:41.661 14768 14768 I flutter : [main] nodeId=484b25af49c5a1e153dfa27f81a322a5
+06-07 22:40:41.675 14768 14768 I flutter : [BleService] BleService initialized. platform=android
+06-07 22:40:41.675 14768 14768 I flutter : [LanService] TCP server listening on port 7655
+06-07 22:40:41.676 14768 14768 I flutter : [LanService] UDP socket bound on port 7654
+06-07 22:40:41.680 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 0개 이웃 (LAN 포함)
+06-07 22:40:41.681 14768 14768 I flutter : [MessagingService] MessagingService 초기화 완료
+06-07 22:40:41.681 14768 14768 I flutter : [FBP] stopScan: already stopped
+06-07 22:40:41.698 14768 14768 I flutter : [LanService] Incoming TCP from 192.168.0.40:58597
+06-07 22:40:41.698 14768 14768 I flutter : [BleService] Scan started
+06-07 22:40:41.715 14768 14768 I flutter : [BleService] Peripheral GATT server initialized
+06-07 22:40:41.715 14768 14768 I flutter : [BleService] Advertising started with GATT server (serviceUuid: 4a580001-b5a3-f393-e0a9-e50e24dcca9e)
+06-07 22:40:41.769 14768 14768 I flutter : [BleService] Peripheral advertising=true
+06-07 22:40:41.827 14768 14768 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:40:41.827 14768 14768 I flutter : [BleService] Connecting to 41:37:E8:EE:5A:3A ...
+06-07 22:40:42.670 14768 14768 I flutter : [BleService] Peripheral central connected: 41:37:E8:EE:5A:3A
+06-07 22:40:43.209 14768 14768 I flutter : [BleService] Peripheral MTU changed: device=41:37:E8:EE:5A:3A mtu=517
+06-07 22:40:45.706 14768 14768 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (peripheral notify, mtu=517)
+06-07 22:40:45.706 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:40:45.767 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:40:45.799 14768 14768 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (peripheral notify, mtu=517)
+06-07 22:40:45.799 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:40:45.806 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:40:46.924 14768 14768 I flutter : [BleService] Connected to 41:37:E8:EE:5A:3A
+06-07 22:40:51.701 14768 14768 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:41:02.226 14768 14768 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:41:06.705 14768 14768 I flutter : [FBP] stopScan: already stopped
+06-07 22:41:06.728 14768 14768 I flutter : [BleService] Scan started
+06-07 22:41:06.914 14768 14768 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -42, name: MeshComm)
+06-07 22:41:09.160 14768 14768 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:41:09.196 14768 14768 I flutter : [LanService] Peer registered via incoming: 14e7592991b4536f37e373f227f4c1ed
+06-07 22:41:09.208 14768 14768 I flutter : [MessagingService] DROP(중복): 89749a60
+06-07 22:41:09.209 14768 14768 I flutter : [MessagingService] DROP(중복): 89749a60
+06-07 22:41:09.227 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:09.229 14768 14768 I flutter : [MessagingService] DROP(자체 패킷 echo): df82c440
+06-07 22:41:09.230 14768 14768 I flutter : [MessagingService] DROP(자체 패킷 echo): df82c440
+06-07 22:41:09.385 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:09.388 14768 14768 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:41:09.487 14768 14768 I flutter : [MessagingService] DROP(자체 패킷 echo): 320c47a0
+06-07 22:41:09.487 14768 14768 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:09.487 14768 14768 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:41:09.487 14768 14768 I flutter : [MessagingService] DROP(TTL=0): b509bf90
+06-07 22:41:09.640 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:09.796 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:10.325 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:10.478 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:11.232 14768 14768 I flutter : [MessagingService] TOPOLOGY_RESPONSE sent request=3c7d1e41 neighbors=2 recipients=0
+06-07 22:41:11.361 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:11.511 14768 14768 I flutter : [BleService] sendPacket error (41:37:E8:EE:5A:3A): PlatformException(writeCharacteristic, data longer than allowed. dataLen: 514 > max: 512 (withResponse, noLongWrite), null, null)
+06-07 22:41:11.511 14768 14768 I flutter : [BleService] sendPacket: removing stale connection 41:37:E8:EE:5A:3A after 3 failures
+06-07 22:41:11.523 14768 14768 I flutter : [BleService] Device disconnected: 41:37:E8:EE:5A:3A
+06-07 22:41:14.403 15000 15029 I flutter : [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
+06-07 22:41:14.507 15000 15000 I flutter : [main] nodeId=484b25af49c5a1e153dfa27f81a322a5
+06-07 22:41:14.523 15000 15000 I flutter : [BleService] BleService initialized. platform=android
+06-07 22:41:14.523 15000 15000 I flutter : [LanService] TCP server listening on port 7655
+06-07 22:41:14.523 15000 15000 I flutter : [LanService] UDP socket bound on port 7654
+06-07 22:41:14.530 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 0개 이웃 (LAN 포함)
+06-07 22:41:14.531 15000 15000 I flutter : [MessagingService] MessagingService 초기화 완료
+06-07 22:41:14.531 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:41:14.544 15000 15000 I flutter : [BleService] Scan started
+06-07 22:41:14.556 15000 15000 I flutter : [BleService] Peripheral GATT server initialized
+06-07 22:41:14.557 15000 15000 I flutter : [BleService] Advertising started with GATT server (serviceUuid: 4a580001-b5a3-f393-e0a9-e50e24dcca9e)
+06-07 22:41:14.589 15000 15000 I flutter : [LanService] Incoming TCP from 192.168.0.40:58600
+06-07 22:41:14.590 15000 15000 I flutter : [BleService] Peripheral advertising=true
+06-07 22:41:14.703 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -42, name: MeshComm)
+06-07 22:41:14.703 15000 15000 I flutter : [BleService] Connecting to 41:37:E8:EE:5A:3A ...
+06-07 22:41:14.869 15000 15000 I flutter : [BleService] Peripheral central connected: 41:37:E8:EE:5A:3A
+06-07 22:41:17.772 15000 15000 I flutter : [BleService] Connected to 41:37:E8:EE:5A:3A
+06-07 22:41:17.963 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 899be2bd
+06-07 22:41:17.963 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:17.963 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:41:17.988 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:41:18.067 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 333529be
+06-07 22:41:18.067 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:18.067 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:41:18.236 15000 15000 I flutter : [BleService] Scan started
+06-07 22:41:18.306 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 2b283fc0
+06-07 22:41:18.306 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:18.306 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:41:18.325 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -42, name: MeshComm)
+06-07 22:41:18.372 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 98d788a7
+06-07 22:41:18.372 15000 15000 I flutter : [BleService] sendPacket: 211 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:18.372 15000 15000 I flutter : [MessagingService] TOPOLOGY_REQUEST sent depth=3 neighbors=1
+06-07 22:41:21.117 15000 15000 I flutter : [BleService] Peripheral central disconnected: 41:37:E8:EE:5A:3A
+06-07 22:41:21.125 15000 15000 I flutter : [BleService] Device disconnected: 41:37:E8:EE:5A:3A
+06-07 22:41:21.389 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 0개 이웃 (LAN 포함)
+06-07 22:41:21.613 15000 15000 I flutter : [LanService] Connected to 14e7592991b4536f37e373f227f4c1ed at 192.168.0.44
+06-07 22:41:23.004 15000 15000 I flutter : [BleService] Peripheral central connected: 41:37:E8:EE:5A:3A
+06-07 22:41:23.395 15000 15000 I flutter : [BleService] Peripheral MTU changed: device=41:37:E8:EE:5A:3A mtu=517
+06-07 22:41:26.040 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (peripheral notify, mtu=517)
+06-07 22:41:26.040 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:41:26.065 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:41:26.125 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:41:26.135 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): e599d35c
+06-07 22:41:28.239 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:41:32.175 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:41:32.212 15000 15000 I flutter : [LanService] Peer registered via incoming: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:41:32.217 15000 15000 I flutter : [MessagingService] DROP(중복): f0bcc866
+06-07 22:41:32.219 15000 15000 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:41:32.222 15000 15000 I flutter : [MessagingService] DROP(중복): 9ed108d3
+06-07 22:41:32.223 15000 15000 I flutter : [MessagingService] DROP(중복): 9ed108d3
+06-07 22:41:32.224 15000 15000 I flutter : [MessagingService] DROP(중복): f0bcc866
+06-07 22:41:32.245 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=c26ceb0e result=TrustChangeResult.unchanged
+06-07 22:41:32.259 15000 15000 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:41:32.268 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (peripheral notify, mtu=517)
+06-07 22:41:32.268 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:41:32.274 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 263a29d0
+06-07 22:41:32.283 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 263a29d0
+06-07 22:41:32.288 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 263a29d0
+06-07 22:41:43.242 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:41:43.254 15000 15000 I flutter : [BleService] Scan started
+06-07 22:41:43.408 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:41:43.408 15000 15000 I flutter : [BleService] Connecting to 41:37:E8:EE:5A:3A ...
+06-07 22:41:44.558 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (peripheral notify, mtu=517)
+06-07 22:41:44.617 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:41:44.617 15000 15000 I flutter : [MessagingService] DROP(TTL=0): ab663a83
+06-07 22:41:45.519 15000 15000 I flutter : [BleService] Connected to 41:37:E8:EE:5A:3A
+06-07 22:41:51.454 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:41:51.542 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): e1d51ddc
+06-07 22:41:51.542 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:41:51.542 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:41:51.543 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 1a4643ea
+06-07 22:41:53.257 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:42:02.172 15000 15000 I flutter : [LanService] Connected to c26ceb0e74a967929a182ed38c8f60cc at 192.168.0.39
+06-07 22:42:08.261 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:42:08.280 15000 15000 I flutter : [BleService] Scan started
+06-07 22:42:08.663 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:42:14.612 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): afcb3841
+06-07 22:42:14.612 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:42:14.667 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:42:14.667 15000 15000 I flutter : [MessagingService] DROP(TTL=0): e78cf90e
+06-07 22:42:18.282 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:42:21.447 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:42:21.514 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 5cb84b4a
+06-07 22:42:21.515 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:42:21.515 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:42:21.515 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 92885fdc
+06-07 22:42:33.286 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:42:33.307 15000 15000 I flutter : [BleService] Scan started
+06-07 22:42:33.400 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:42:43.309 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:42:44.612 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): c29e05f1
+06-07 22:42:44.612 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:42:44.631 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:42:44.631 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 913a5241
+06-07 22:42:51.449 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:42:51.514 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 61b7e5a3
+06-07 22:42:51.515 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:42:51.515 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:42:51.515 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 674c13e6
+06-07 22:42:58.312 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:42:58.333 15000 15000 I flutter : [BleService] Scan started
+06-07 22:42:58.506 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:43:08.335 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:43:14.617 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 90332990
+06-07 22:43:14.617 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:43:14.637 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:43:14.638 15000 15000 I flutter : [MessagingService] DROP(TTL=0): bab96965
+06-07 22:43:21.461 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:43:21.548 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 4bbf12f4
+06-07 22:43:21.548 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:43:21.548 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:43:21.548 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 07b51c4e
+06-07 22:43:23.338 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:43:23.363 15000 15000 I flutter : [BleService] Scan started
+06-07 22:43:23.492 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:43:33.365 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:43:44.623 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 127d7ec1
+06-07 22:43:44.623 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:43:44.645 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:43:44.645 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 2fa59190
+06-07 22:43:48.370 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:43:48.392 15000 15000 I flutter : [BleService] Scan started
+06-07 22:43:48.543 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:43:51.445 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:43:51.515 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): d3864d0e
+06-07 22:43:51.516 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:43:51.516 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:43:51.516 15000 15000 I flutter : [MessagingService] DROP(TTL=0): df407824
+06-07 22:43:58.394 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:44:13.398 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:44:13.419 15000 15000 I flutter : [BleService] Scan started
+06-07 22:44:13.464 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:44:14.613 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 3e24f691
+06-07 22:44:14.613 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:44:14.661 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:44:14.661 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 87218f64
+06-07 22:44:21.450 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:44:21.515 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 7f58a2b4
+06-07 22:44:21.515 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:44:21.515 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:44:21.515 15000 15000 I flutter : [MessagingService] DROP(TTL=0): ceb151b8
+06-07 22:44:23.424 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:44:38.429 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:44:38.450 15000 15000 I flutter : [BleService] Scan started
+06-07 22:44:38.607 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:44:44.621 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): a03a9844
+06-07 22:44:44.621 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:44:44.636 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:44:44.636 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 8f4b9aa3
+06-07 22:44:48.453 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:44:51.456 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:44:51.519 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): c0b59714
+06-07 22:44:51.519 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:44:51.519 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:44:51.519 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 3f65dba6
+06-07 22:45:03.456 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:45:03.483 15000 15000 I flutter : [BleService] Scan started
+06-07 22:45:03.571 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:45:13.488 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:45:14.614 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): fc18a81d
+06-07 22:45:14.614 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:45:14.665 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:45:14.665 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 40a32f05
+06-07 22:45:21.448 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:45:21.514 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 0ffccd59
+06-07 22:45:21.514 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:45:21.514 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:45:21.514 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 825f4ca9
+06-07 22:45:28.494 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:45:28.515 15000 15000 I flutter : [BleService] Scan started
+06-07 22:45:28.599 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -42, name: MeshComm)
+06-07 22:45:38.518 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:45:44.617 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 1e396a82
+06-07 22:45:44.617 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:45:44.670 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:45:44.670 15000 15000 I flutter : [MessagingService] DROP(TTL=0): c8034218
+06-07 22:45:51.458 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:45:51.548 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 8cec14b6
+06-07 22:45:51.548 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:45:51.548 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:45:51.548 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 550c2a1b
+06-07 22:45:53.522 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:45:53.540 15000 15000 I flutter : [BleService] Scan started
+06-07 22:45:53.988 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:46:03.543 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:46:14.564 15000 15000 I flutter : [LanService] [DIAG-LAN] onDone → removePeer: c26ceb0e74a967929a182ed38c8f60cc
+06-07 22:46:14.613 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 676ea3d0
+06-07 22:46:14.613 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:46:14.653 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:46:14.653 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 70ea1280
+06-07 22:46:14.668 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b7d25bec
+06-07 22:46:14.668 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:46:14.668 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
+06-07 22:46:14.683 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b7d25bec
+06-07 22:46:14.696 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b7d25bec
+06-07 22:46:18.548 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:46:18.569 15000 15000 I flutter : [BleService] Scan started
+06-07 22:46:19.009 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:46:21.463 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:46:21.541 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 2f6a97ae
+06-07 22:46:21.542 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:46:21.542 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:46:21.542 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 89f63388
+06-07 22:46:21.544 15000 15000 I flutter : [MessagingService] DROP(중복): 3dd028a4
+06-07 22:46:21.545 15000 15000 I flutter : [MessagingService] DROP(중복): 3dd028a4
+06-07 22:46:21.552 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=14e75929 result=TrustChangeResult.unchanged
+06-07 22:46:28.580 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:46:30.111 15000 15000 I flutter : [LanService] [DIAG-LAN] Socket error (c26ceb0e74a967929a182ed38c8f60cc): SocketException: Software caused connection abort (OS Error: Software caused connection abort, errno = 103), address = 0.0.0.0, port = 7655
+06-07 22:46:30.112 15000 15000 I flutter : [LanService] [DIAG-LAN] Socket error (14e7592991b4536f37e373f227f4c1ed): SocketException: Software caused connection abort (OS Error: Software caused connection abort, errno = 103), address = 192.168.0.44, port = 42636
+06-07 22:46:32.285 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 처리: sender=c26ceb0e result=TrustChangeResult.unchanged
+06-07 22:46:43.584 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:46:43.625 15000 15000 I flutter : [BleService] Scan started
+06-07 22:46:43.701 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -38, name: MeshComm)
+06-07 22:46:44.550 15000 15000 E flutter : [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: SocketException: Send failed (OS Error: Operation not permitted, errno = 1), address = 0.0.0.0, port = 7654
+06-07 22:46:44.550 15000 15000 E flutter : #0      _NativeSocket.send (dart:io-patch/socket_patch.dart:1513)
+06-07 22:46:44.550 15000 15000 E flutter : #1      _RawDatagramSocket.send (dart:io-patch/socket_patch.dart:3037)
+06-07 22:46:44.550 15000 15000 E flutter : #2      LanService._sendBeacon (package:mesh_comm/core/lan/lan_service.dart:299)
+06-07 22:46:44.550 15000 15000 E flutter : #3      LanService._startBeacon.<anonymous closure> (package:mesh_comm/core/lan/lan_service.dart:284)
+06-07 22:46:44.550 15000 15000 E flutter : #4      _Timer._runTimers (dart:isolate-patch/timer_impl.dart:423)
+06-07 22:46:44.550 15000 15000 E flutter : #5      _Timer._handleMessage (dart:isolate-patch/timer_impl.dart:454)
+06-07 22:46:44.550 15000 15000 E flutter : #6      _RawReceivePort._handleMessage (dart:isolate-patch/isolate_patch.dart:192)
+06-07 22:46:44.550 15000 15000 E flutter : 
+06-07 22:46:44.551 15000 15000 E flutter : [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: SocketException: Send failed (OS Error: Operation not permitted, errno = 1), address = 0.0.0.0, port = 7654
+06-07 22:46:44.551 15000 15000 E flutter : #0      _NativeSocket.send (dart:io-patch/socket_patch.dart:1513)
+06-07 22:46:44.551 15000 15000 E flutter : #1      _RawDatagramSocket.send (dart:io-patch/socket_patch.dart:3037)
+06-07 22:46:44.551 15000 15000 E flutter : #2      LanService._sendBeacon (package:mesh_comm/core/lan/lan_service.dart:308)
+06-07 22:46:44.551 15000 15000 E flutter : #3      LanService._startBeacon.<anonymous closure> (package:mesh_comm/core/lan/lan_service.dart:284)
+06-07 22:46:44.551 15000 15000 E flutter : #4      _Timer._runTimers (dart:isolate-patch/timer_impl.dart:423)
+06-07 22:46:44.551 15000 15000 E flutter : #5      _Timer._handleMessage (dart:isolate-patch/timer_impl.dart:454)
+06-07 22:46:44.551 15000 15000 E flutter : #6      _RawReceivePort._handleMessage (dart:isolate-patch/isolate_patch.dart:192)
+06-07 22:46:44.551 15000 15000 E flutter : 
+06-07 22:46:44.649 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): e910dc2f
+06-07 22:46:44.649 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:46:44.712 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:46:44.713 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 7f5c2c55
+06-07 22:46:51.481 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:46:51.580 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 98e9ccfd
+06-07 22:46:51.581 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:46:51.581 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:46:51.581 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 026585c4
+06-07 22:46:53.629 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:47:08.633 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:47:08.675 15000 15000 I flutter : [BleService] Scan started
+06-07 22:47:11.011 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -39, name: MeshComm)
+06-07 22:47:14.648 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): cf8c8173
+06-07 22:47:14.648 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:47:14.713 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:47:14.713 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 15890a51
+06-07 22:47:18.679 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:47:21.500 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:47:21.574 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): d9d0d3d2
+06-07 22:47:21.574 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:47:21.574 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:47:21.574 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 1d1417d4
+06-07 22:47:33.684 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:47:33.733 15000 15000 I flutter : [BleService] Scan started
+06-07 22:47:33.929 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:47:43.737 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:47:44.652 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): e33209c8
+06-07 22:47:44.652 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:47:44.716 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:47:44.716 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 24a73521
+06-07 22:47:51.476 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:47:51.580 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 613ea239
+06-07 22:47:51.580 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:47:51.580 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:47:51.580 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 45911927
+06-07 22:47:58.740 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:47:58.753 15000 15000 I flutter : [BleService] Scan started
+06-07 22:47:58.931 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:48:08.757 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:48:14.617 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 61cf9f8a
+06-07 22:48:14.617 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:48:14.668 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:48:14.668 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 8203c14d
+06-07 22:48:21.455 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:48:21.516 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 3ece6ce6
+06-07 22:48:21.516 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:48:21.516 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:48:21.516 15000 15000 I flutter : [MessagingService] DROP(TTL=0): f5349564
+06-07 22:48:23.761 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:48:23.785 15000 15000 I flutter : [BleService] Scan started
+06-07 22:48:23.897 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:48:33.788 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:48:44.618 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 0ebc8479
+06-07 22:48:44.618 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:48:44.671 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:48:44.671 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 59252146
+06-07 22:48:48.793 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:48:48.813 15000 15000 I flutter : [BleService] Scan started
+06-07 22:48:48.959 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:48:51.451 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:48:51.518 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b5e815b5
+06-07 22:48:51.519 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:48:51.519 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:48:51.519 15000 15000 I flutter : [MessagingService] DROP(TTL=0): a306ff6a
+06-07 22:48:58.815 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:49:13.819 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:49:13.843 15000 15000 I flutter : [BleService] Scan started
+06-07 22:49:13.906 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:49:14.616 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): e824e8f8
+06-07 22:49:14.616 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:49:14.662 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:49:14.662 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 993e8495
+06-07 22:49:21.447 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:49:21.516 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 0b889c30
+06-07 22:49:21.516 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:49:21.516 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:49:21.516 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 5adefa0b
+06-07 22:49:23.846 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:49:38.849 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:49:38.870 15000 15000 I flutter : [BleService] Scan started
+06-07 22:49:39.032 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:49:44.618 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b33ecdd3
+06-07 22:49:44.618 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:49:44.643 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:49:44.643 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 0531c103
+06-07 22:49:48.873 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:49:51.487 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:49:51.550 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): b08894b8
+06-07 22:49:51.550 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:49:51.550 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:49:51.550 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 28ee54ae
+06-07 22:50:03.878 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:50:03.895 15000 15000 I flutter : [BleService] Scan started
+06-07 22:50:04.006 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:50:13.897 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:50:14.586 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): db652f4f
+06-07 22:50:14.586 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:50:14.644 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:50:14.644 15000 15000 I flutter : [MessagingService] DROP(TTL=0): c17fcd42
+06-07 22:50:21.445 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:50:21.515 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 290278ab
+06-07 22:50:21.515 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:50:21.515 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:50:21.515 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 2b107ed1
+06-07 22:50:28.903 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:50:28.927 15000 15000 I flutter : [BleService] Scan started
+06-07 22:50:29.038 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -41, name: MeshComm)
+06-07 22:50:38.931 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:50:44.618 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 4847311d
+06-07 22:50:44.618 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:50:44.678 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:50:44.678 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 21c4ca77
+06-07 22:50:51.470 15000 15000 I flutter : [MessagingService] PING 수신: sender=14e75929
+06-07 22:50:51.548 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 1706d7f1
+06-07 22:50:51.548 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:50:51.548 15000 15000 I flutter : [MessagingService] PONG 전송: target=14e75929
+06-07 22:50:51.548 15000 15000 I flutter : [MessagingService] DROP(TTL=0): 49e0d5d4
+06-07 22:50:53.934 15000 15000 I flutter : [FBP] stopScan: already stopped
+06-07 22:50:53.957 15000 15000 I flutter : [BleService] Scan started
+06-07 22:50:54.040 15000 15000 I flutter : [BleService] MeshComm 기기 발견: 41:37:E8:EE:5A:3A (rssi: -40, name: MeshComm)
+06-07 22:51:03.960 15000 15000 I flutter : [BleService] Scan completed — 15초 후 재스캔
+06-07 22:51:14.615 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): a6886a64
+06-07 22:51:14.615 15000 15000 I flutter : [BleService] sendPacket: 124 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:51:14.665 15000 15000 I flutter : [MessagingService] PONG 수신: sender=14e75929
+06-07 22:51:14.665 15000 15000 I flutter : [MessagingService] DROP(TTL=0): b0bdb405
+06-07 22:51:14.670 15000 15000 I flutter : [MessagingService] DROP(자체 패킷 echo): 68d29dc8
+06-07 22:51:14.670 15000 15000 I flutter : [BleService] sendPacket: 401 bytes / 1 fragments → 41:37:E8:EE:5A:3A (central write, mtu=517)
+06-07 22:51:14.670 15000 15000 I flutter : [MessagingService] KEY_ANNOUNCE 브로드캐스트 완료: 1개 이웃 (LAN 포함)
